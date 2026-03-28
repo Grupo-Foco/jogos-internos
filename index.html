@@ -451,7 +451,12 @@ var XLSXMini = {
 }
 
 
-var S={role:'admin',page:'dashboard',sbo:false,ev:{name:'Jogos Internos 2026'},cls:[],spt:[],enr:[],brk:{},locs:[],mod:null,bs:'',bc:'',rt:'class',theme:'dark',ir:null,bay:'',say:'',auth:null,logins:[],judgeLogins:[],recursos:[],adminPass:'admin123',loginErr:'',thirdPlace:{},nextGameAlert:null,appInfo:{author:'Rodolfo C. Pinheiro',contact:'rodolfinhocp@gmail.com',version:'3.1'},sb:{url:'https://omevoikikvkjshormjoh.supabase.co',key:'',enabled:true,status:'',syncing:false}};
+var S={role:'admin',page:'dashboard',sbo:false,ev:{name:'Jogos Internos 2026'},cls:[],spt:[],enr:[],brk:{},locs:[],mod:null,bs:'',bc:'',rt:'class',theme:'dark',ir:null,bay:'',say:'',auth:null,logins:[],judgeLogins:[],recursos:[],adminPass:'admin123',loginErr:'',thirdPlace:{},nextGameAlert:null,appInfo:{author:'Rodolfo C. Pinheiro',contact:'rodolfinhocp@gmail.com',version:'4.0'},sb:{url:'https://omevoikikvkjshormjoh.supabase.co',key:'',enabled:true,status:'',syncing:false},
+// v4.0: Scoring, WO, Individual sports
+scoring:{p1:10,p2:8,p3:6,p4:4,pWin:3,pWO:-2}, // points per position + per win + WO penalty
+podiums:[], // [{id,sportId,category,year,p1classId,p2classId,p3classId,notes}]
+woLog:[] // [{matchId,teamId,reason,date}]
+};
 
 // *** SUPABASE AUTO-CONFIG ***
 // The publishable key is safe to embed (it's public, protected by RLS)
@@ -791,17 +796,57 @@ function tName(id){
 }
 
 function calcRk(){
+  var sc=S.scoring||{p1:10,p2:8,p3:6,p4:4,pWin:3,pWO:-2};
   var pts={};
+  // Points from bracket wins
   Object.entries(S.brk).forEach(function(e1){
     Object.values(e1[1]).forEach(function(rs){rs.forEach(function(r){r.m.forEach(function(m){
-      if(m.w&&m.w!=='BYE'){if(!pts[m.w])pts[m.w]={w:0,p:0};pts[m.w].w++;pts[m.w].p+=3;}
+      if(m.w&&m.w!=='BYE'){
+        if(!pts[m.w])pts[m.w]={w:0,p:0,wo:0};
+        pts[m.w].w++;pts[m.w].p+=(sc.pWin||3);
+      }
+      // WO penalty
+      if(m.wo){
+        var loser=m.wo;// team that got WO
+        if(!pts[loser])pts[loser]={w:0,p:0,wo:0};
+        pts[loser].wo++;pts[loser].p+=(sc.pWO||0);
+      }
     })})});
   });
-  return Object.entries(pts).map(function(entry){var id=entry[0],d=entry[1];var e=S.enr.find(function(x){return x.id===id});var c=S.cls.find(function(x){return x.id===(e&&e.ci)});return{id:id,tn:e?e.tn:'—',cn:c?c.nm:'—',sn:(S.spt.find(function(x){return x.id===(e&&e.si)})||{nm:'—'}).nm,w:d.w,p:d.p}}).sort(function(a,b){return b.p-a.p||b.w-a.w})
+  // Position points: find finals and assign 1st/2nd/3rd/4th
+  Object.entries(S.brk).forEach(function(e1){
+    Object.entries(e1[1]).forEach(function(e2){
+      var rs=e2[1];if(!rs||!rs.length)return;
+      var finalRound=rs[rs.length-1];if(!finalRound||!finalRound.m)return;
+      // Find the main final (not 3rd place)
+      var finalMatch=finalRound.m.find(function(m){return!m.is3rd});
+      var thirdMatch=finalRound.m.find(function(m){return m.is3rd});
+      if(finalMatch&&finalMatch.w){
+        var first=finalMatch.w;
+        var second=finalMatch.w===finalMatch.t1?finalMatch.t2:finalMatch.t1;
+        if(first&&first!=='BYE'){if(!pts[first])pts[first]={w:0,p:0,wo:0};pts[first].p+=(sc.p1||0)}
+        if(second&&second!=='BYE'&&second.indexOf('W_')!==0&&second.indexOf('L_')!==0){if(!pts[second])pts[second]={w:0,p:0,wo:0};pts[second].p+=(sc.p2||0)}
+      }
+      if(thirdMatch&&thirdMatch.w){
+        var third=thirdMatch.w;
+        var fourth=thirdMatch.w===thirdMatch.t1?thirdMatch.t2:thirdMatch.t1;
+        if(third&&third!=='BYE'&&third.indexOf('L_')!==0){if(!pts[third])pts[third]={w:0,p:0,wo:0};pts[third].p+=(sc.p3||0)}
+        if(fourth&&fourth!=='BYE'&&fourth.indexOf('L_')!==0){if(!pts[fourth])pts[fourth]={w:0,p:0,wo:0};pts[fourth].p+=(sc.p4||0)}
+      }
+    });
+  });
+  return Object.entries(pts).map(function(entry){var id=entry[0],d=entry[1];var e=S.enr.find(function(x){return x.id===id});var c=S.cls.find(function(x){return x.id===(e&&e.ci)});return{id:id,tn:e?e.tn:'—',cn:c?c.nm:'—',ci:e?e.ci:'',sn:(S.spt.find(function(x){return x.id===(e&&e.si)})||{nm:'—'}).nm,w:d.w,p:d.p,wo:d.wo||0}}).sort(function(a,b){return b.p-a.p||b.w-a.w})
 }
 function calcCR(){
   var rk=calcRk(),pts={};
-  rk.forEach(function(x){var e=S.enr.find(function(z){return z.id===x.id});if(e)pts[e.ci]=(pts[e.ci]||0)+x.p});
+  rk.forEach(function(x){if(x.ci)pts[x.ci]=(pts[x.ci]||0)+x.p});
+  // Add podium points (individual sports)
+  var sc=S.scoring||{p1:10,p2:8,p3:6};
+  (S.podiums||[]).forEach(function(pod){
+    if(pod.p1){pts[pod.p1]=(pts[pod.p1]||0)+(sc.p1||10)}
+    if(pod.p2){pts[pod.p2]=(pts[pod.p2]||0)+(sc.p2||8)}
+    if(pod.p3){pts[pod.p3]=(pts[pod.p3]||0)+(sc.p3||6)}
+  });
   return Object.entries(pts).map(function(entry){var id=entry[0],p=entry[1];return{id:id,nm:(S.cls.find(function(x){return x.id===id})||{nm:'—'}).nm,p:p}}).sort(function(a,b){return b.p-a.p})
 }
 
@@ -852,7 +897,7 @@ function R(){
 
   if(!S.auth){renderLogin(root);return;}
 
-  var aN=[{id:'dashboard',l:'Dashboard',e:'🏠',s:'Geral'},{id:'classes',l:'Turmas',e:'🏫',s:'Cadastros'},{id:'sports',l:'Esportes',e:'⚽',s:'Cadastros'},{id:'venues',l:'Locais',e:'📍',s:'Cadastros'},{id:'enrollments',l:'Inscrições',e:'📋',s:'Competição'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Competição'},{id:'schedule',l:'Agenda',e:'📅',s:'Competição'},{id:'conflicts',l:'Conflitos',e:'⚠️',s:'Competição'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'},{id:'logins',l:'Logins',e:'🔑',s:'Acesso'}];
+  var aN=[{id:'dashboard',l:'Dashboard',e:'🏠',s:'Geral'},{id:'classes',l:'Turmas',e:'🏫',s:'Cadastros'},{id:'sports',l:'Esportes',e:'⚽',s:'Cadastros'},{id:'venues',l:'Locais',e:'📍',s:'Cadastros'},{id:'enrollments',l:'Inscrições',e:'📋',s:'Competição'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Competição'},{id:'schedule',l:'Agenda',e:'📅',s:'Competição'},{id:'conflicts',l:'Conflitos',e:'⚠️',s:'Competição'},{id:'individual',l:'Individuais',e:'🏅',s:'Competição'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'scoring_page',l:'Pontuação',e:'🎯',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'},{id:'logins',l:'Logins',e:'🔑',s:'Acesso'}];
   var sN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'enroll',l:'Inscrever',e:'📋',s:'Ações'},{id:'brackets',l:'Jogos',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'}];
   var jN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'recursos',l:'Recursos',e:'📝',s:'Ações'}];
   var nav=S.role==='admin'?aN:S.role==='judge'?jN:sN;
@@ -925,7 +970,7 @@ function R(){
   );
 
   var content=h('div',{'class':'content'});
-  var pages={dashboard:pD,classes:pC,sports:pS,venues:pVenues,settings_page:function(c){S.page='dashboard';S.mod={tp:'settings'};R();return;},enrollments:pEA,enroll:pES,brackets:pB,schedule:pSc,ranking:pR,conflicts:pConflicts,downloads:pDl,'import':pI,logins:pLogins,recursos:pRecursos};
+  var pages={dashboard:pD,classes:pC,sports:pS,venues:pVenues,settings_page:function(c){S.page='dashboard';R();return;},enrollments:pEA,enroll:pES,brackets:pB,schedule:pSc,ranking:pR,conflicts:pConflicts,downloads:pDl,'import':pI,logins:pLogins,recursos:pRecursos,scoring_page:pScoring,individual:pIndividual};
   (pages[S.page]||pD)(content);
 
   var mainDiv=h('div',{'class':'main'},topbar,content);
@@ -1557,7 +1602,21 @@ function mRes(c){
           inp2
         )
       ),
-      h('div',{style:{fontSize:'11px',color:'var(--tx3)',textAlign:'center'}},'Pontuação mínima: 0. Empate não é permitido.')
+      h('div',{style:{fontSize:'11px',color:'var(--tx3)',textAlign:'center'}},'Pontuação mínima: 0. Empate não é permitido.'),
+      // W.O. Section
+      h('div',{style:{marginTop:'14px',padding:'12px',background:'var(--rdG)',borderRadius:'var(--r)',border:'1px solid var(--rd)'}},
+        h('div',{style:{fontSize:'11px',fontWeight:'700',color:'var(--rd)',marginBottom:'8px',textAlign:'center'}},'⚠️ W.O. (Ausência de time)'),
+        h('div',{style:{display:'flex',gap:'8px',justifyContent:'center'}},
+          h('button',{'class':'btn btn-s btn-r',onclick:function(){
+            // WO for team 1 - team 2 wins
+            applyWO(m,m.t1,m.t2);
+          }},'W.O. '+tName(m.t1)),
+          h('button',{'class':'btn btn-s btn-r',onclick:function(){
+            // WO for team 2 - team 1 wins
+            applyWO(m,m.t2,m.t1);
+          }},'W.O. '+tName(m.t2))
+        )
+      )
     ),
     h('div',{'class':'md-f'},
       h('button',{'class':'btn',onclick:close},'Cancelar'),
@@ -1742,6 +1801,25 @@ function applyAutoSchedule(bkey,ct,date,startTime,dur,interval,location){
       i++;
     });
   });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// W.O. (WALK-OVER) SYSTEM
+// ══════════════════════════════════════════════════════════════════════════
+function applyWO(m,absentTeam,winnerTeam){
+  if(!confirm('Confirmar W.O.?\n\nAusente: '+tName(absentTeam)+'\nVencedor: '+tName(winnerTeam)))return;
+  // Set score as 0x0 but with winner and WO flag
+  S.brk[S.mod.si][S.mod.ct]=S.brk[S.mod.si][S.mod.ct].map(function(r){return Object.assign({},r,{m:r.m.map(function(x){
+    if(x.id===m.id)return Object.assign({},x,{s1:0,s2:0,w:winnerTeam,wo:absentTeam});
+    if(x.t1==='W_'+m.id)return Object.assign({},x,{t1:winnerTeam});
+    if(x.t2==='W_'+m.id)return Object.assign({},x,{t2:winnerTeam});
+    return x;
+  })})});
+  // Log the WO
+  if(!S.woLog)S.woLog=[];
+  S.woLog.push({matchId:m.id,teamId:absentTeam,winnerId:winnerTeam,date:new Date().toLocaleString('pt-BR')});
+  notifyNextGame(S.mod.si,S.mod.ct,m.id);
+  S.mod=null;R();
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -2617,6 +2695,181 @@ function mAddRecurso(c){
   c.appendChild(ov);
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// SCORING CONFIG PAGE (admin only)
+// ══════════════════════════════════════════════════════════════════════════════
+function pScoring(c){
+  if(!S.scoring)S.scoring={p1:10,p2:8,p3:6,p4:4,pWin:3,pWO:-2};
+  var sc=S.scoring;
+  function mkInp(label,key,color){
+    var inp=h('input',{'class':'fi',type:'number',inputmode:'numeric',value:''+sc[key],
+      style:{maxWidth:'80px',textAlign:'center',fontSize:'16px',fontWeight:'700',fontFamily:"'Space Mono'"},
+      oninput:function(e){sc[key]=parseInt(e.target.value)||0}
+    });
+    return h('div',{style:{display:'flex',alignItems:'center',gap:'10px',padding:'10px 0',borderBottom:'1px solid var(--bd)'}},
+      h('div',{style:{width:'36px',height:'36px',borderRadius:'50%',background:color,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'800',fontSize:'14px',color:'#fff',flexShrink:'0'}},label.charAt(0)),
+      h('div',{style:{flex:'1'}},h('div',{style:{fontWeight:'700',fontSize:'13px'}},label),h('div',{style:{fontSize:'10px',color:'var(--tx3)'}},key==='pWin'?'Por vitória no chaveamento':key==='pWO'?'Penalidade por W.O. (use negativo)':'Posição final no esporte')),
+      inp
+    );
+  }
+  c.appendChild(h('div',{'class':'card',style:{marginBottom:'20px'}},
+    h('div',{'class':'card-h'},h('div',{'class':'card-t'},'🎯 Regra de Pontuação')),
+    h('div',{'class':'card-b'},
+      h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.7'}},'Configure os pontos para cada posição. Aplica-se a esportes coletivos (chaveamento) e individuais (pódio manual).'),
+      mkInp('1º Lugar','p1','#f59e0b'),
+      mkInp('2º Lugar','p2','#94a3b8'),
+      mkInp('3º Lugar','p3','#fb923c'),
+      mkInp('4º Lugar','p4','#64748b'),
+      mkInp('Vitória','pWin','#34d399'),
+      mkInp('W.O.','pWO','#f87171'),
+      h('div',{style:{marginTop:'16px',display:'flex',gap:'8px'}},
+        h('button',{'class':'btn btn-p',onclick:function(){S.scoring=sc;R();}},'✅ Salvar'),
+        h('button',{'class':'btn',onclick:function(){S.scoring={p1:10,p2:8,p3:6,p4:4,pWin:3,pWO:-2};R();}},'Restaurar Padrão')
+      )
+    )
+  ));
+  // Preview
+  c.appendChild(h('div',{'class':'card'},
+    h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📊 Exemplo de Pontuação')),
+    h('div',{'class':'card-b',style:{fontSize:'12px',color:'var(--tx2)',lineHeight:'1.8'}},
+      h('div',{html:'Se uma equipe vence 3 jogos e fica em 1º lugar:<br>'+
+        '<b style="color:var(--gn)">Vitórias:</b> 3 × '+(sc.pWin||0)+' = <b>'+(3*(sc.pWin||0))+'</b> pts<br>'+
+        '<b style="color:var(--am)">1º Lugar:</b> '+(sc.p1||0)+' pts<br>'+
+        '<b>Total:</b> <span style="color:var(--pr);font-size:16px;font-weight:800">'+(3*(sc.pWin||0)+(sc.p1||0))+'</span> pontos<br><br>'+
+        'Se um time leva W.O.:<br><b style="color:var(--rd)">Penalidade:</b> '+(sc.pWO||0)+' pts por W.O.'})
+    )
+  ));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INDIVIDUAL SPORTS PAGE (admin only)
+// ══════════════════════════════════════════════════════════════════════════════
+function pIndividual(c){
+  if(!S.podiums)S.podiums=[];
+  // Header
+  c.appendChild(h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'16px'}},
+    h('div',{style:{color:'var(--tx2)',fontSize:'13px'}},S.podiums.length+' pódio(s) registrado(s)'),
+    h('button',{'class':'btn btn-p',onclick:function(){S.mod={tp:'addPodium'};R()}},'+ Novo Pódio')
+  ));
+  c.appendChild(h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'16px',lineHeight:'1.7'}},'Registre os resultados de esportes individuais (xadrez, natação, video game, etc). Escolha a turma vencedora de cada posição. A pontuação será adicionada automaticamente ao ranking.'));
+
+  if(!S.podiums.length){
+    c.appendChild(h('div',{'class':'card'},h('div',{'class':'card-b'},h('div',{'class':'em'},'Nenhum pódio registrado. Clique em "+ Novo Pódio".'))));
+  } else {
+    var sc=S.scoring||{p1:10,p2:8,p3:6};
+    S.podiums.forEach(function(pod){
+      var sp=S.spt.find(function(s){return s.id===pod.sportId});
+      var c1=S.cls.find(function(x){return x.id===pod.p1});
+      var c2=S.cls.find(function(x){return x.id===pod.p2});
+      var c3=S.cls.find(function(x){return x.id===pod.p3});
+      var card=h('div',{'class':'card',style:{marginBottom:'12px'}});
+      card.appendChild(h('div',{'class':'card-h'},
+        h('div',{style:{display:'flex',alignItems:'center',gap:'8px'}},
+          h('span',{style:{fontSize:'18px'}},'🏅'),
+          h('div',{},
+            h('div',{style:{fontWeight:'700',fontSize:'14px'}},(sp?sp.nm:'Esporte')+(pod.category?' — '+pod.category:'')),
+            h('div',{style:{fontSize:'11px',color:'var(--tx3)'}},pod.year||'')
+          )
+        ),
+        h('button',{'class':'btn btn-s btn-r',onclick:(function(pid){return function(){
+          if(confirm('Remover este pódio?'))S.podiums=S.podiums.filter(function(x){return x.id!==pid});R();
+        }})(pod.id)},'🗑')
+      ));
+      // Podium display
+      card.appendChild(h('div',{'class':'card-b',style:{display:'flex',gap:'12px',justifyContent:'center',flexWrap:'wrap'}},
+        h('div',{style:{textAlign:'center',padding:'12px 20px',borderRadius:'12px',background:'linear-gradient(135deg,#fbbf2422,#f59e0b22)',border:'1px solid #f59e0b44',minWidth:'100px'}},
+          h('div',{style:{fontSize:'24px'}},'🥇'),
+          h('div',{style:{fontWeight:'800',fontSize:'14px',color:'#f59e0b'}},c1?c1.nm:'—'),
+          h('div',{style:{fontSize:'10px',color:'var(--tx3)'}},sc.p1+' pts')
+        ),
+        h('div',{style:{textAlign:'center',padding:'12px 20px',borderRadius:'12px',background:'linear-gradient(135deg,#94a3b822,#64748b22)',border:'1px solid #64748b44',minWidth:'100px'}},
+          h('div',{style:{fontSize:'24px'}},'🥈'),
+          h('div',{style:{fontWeight:'800',fontSize:'14px',color:'#94a3b8'}},c2?c2.nm:'—'),
+          h('div',{style:{fontSize:'10px',color:'var(--tx3)'}},sc.p2+' pts')
+        ),
+        h('div',{style:{textAlign:'center',padding:'12px 20px',borderRadius:'12px',background:'linear-gradient(135deg,#fb923c22,#ea580c22)',border:'1px solid #ea580c44',minWidth:'100px'}},
+          h('div',{style:{fontSize:'24px'}},'🥉'),
+          h('div',{style:{fontWeight:'800',fontSize:'14px',color:'#fb923c'}},c3?c3.nm:'—'),
+          h('div',{style:{fontSize:'10px',color:'var(--tx3)'}},sc.p3+' pts')
+        )
+      ));
+      if(pod.notes)card.appendChild(h('div',{style:{padding:'8px 16px',fontSize:'11px',color:'var(--tx3)'}},pod.notes));
+      c.appendChild(card);
+    });
+  }
+  // Modal
+  if(S.mod&&S.mod.tp==='addPodium')mAddPodium(c);
+}
+
+function mAddPodium(c){
+  var f={sportId:'',category:'',year:'',p1:'',p2:'',p3:'',notes:''};
+  var ov=h('div',{'class':'ov'});ov.onclick=function(e){if(e.target===ov){S.mod=null;R()}};
+  var close=function(){S.mod=null;R()};
+  var errDiv=h('div',{style:{display:'none',color:'#f87171',fontSize:'12px',marginBottom:'8px'}});
+
+  // Sport select
+  var spSel=h('select',{'class':'fs',onchange:function(e){f.sportId=e.target.value}},h('option',{value:''},'Selecione o esporte...'));
+  S.spt.forEach(function(s){spSel.appendChild(h('option',{value:s.id},s.nm))});
+
+  // Category
+  var catInp=h('input',{'class':'fi',placeholder:'Ex: Masculino, Feminino, Misto',oninput:function(e){f.category=e.target.value}});
+
+  // Year filter
+  var yrSel=h('select',{'class':'fs',onchange:function(e){f.year=e.target.value;updateClsSelects()}},h('option',{value:''},'Todas as séries'));
+  var anos=[];S.cls.forEach(function(cl){if(cl.yr&&anos.indexOf(cl.yr)<0)anos.push(cl.yr)});
+  anos.sort();anos.forEach(function(a){yrSel.appendChild(h('option',{value:a},a))});
+
+  // Class selects for podium
+  function mkClsSel(onChange){
+    var sel=h('select',{'class':'fs',onchange:function(e){onChange(e.target.value)}},h('option',{value:''},'Selecione a turma...'));
+    return sel;
+  }
+  var sel1=mkClsSel(function(v){f.p1=v});
+  var sel2=mkClsSel(function(v){f.p2=v});
+  var sel3=mkClsSel(function(v){f.p3=v});
+
+  function updateClsSelects(){
+    [sel1,sel2,sel3].forEach(function(sel){
+      var cur=sel.value;
+      sel.innerHTML='';sel.appendChild(h('option',{value:''},'Selecione a turma...'));
+      var list=f.year?S.cls.filter(function(cl){return cl.yr===f.year}):S.cls;
+      list.forEach(function(cl){sel.appendChild(h('option',{value:cl.id},cl.nm))});
+      sel.value=cur;
+    });
+  }
+  updateClsSelects();
+
+  var notesInp=h('input',{'class':'fi',placeholder:'Observações (opcional)',oninput:function(e){f.notes=e.target.value}});
+
+  ov.appendChild(h('div',{'class':'md'},
+    h('div',{'class':'md-h'},h('div',{'class':'md-t'},'🏅 Novo Pódio Individual'),h('button',{'class':'btn btn-s',onclick:close},'✕')),
+    h('div',{'class':'md-b'},
+      errDiv,
+      h('div',{'class':'fr'},
+        h('div',{'class':'fg'},h('label',{'class':'fl'},'Esporte'),spSel),
+        h('div',{'class':'fg'},h('label',{'class':'fl'},'Categoria'),catInp)
+      ),
+      h('div',{'class':'fg'},h('label',{'class':'fl'},'Ano/Série (filtrar turmas)'),yrSel),
+      h('div',{style:{marginTop:'8px',marginBottom:'4px',fontSize:'11px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',letterSpacing:'.5px'}},'Pódio (selecione a turma vencedora)'),
+      h('div',{'class':'fg'},h('label',{'class':'fl',style:{color:'#f59e0b'}},'🥇 1º Lugar'),sel1),
+      h('div',{'class':'fg'},h('label',{'class':'fl',style:{color:'#94a3b8'}},'🥈 2º Lugar'),sel2),
+      h('div',{'class':'fg'},h('label',{'class':'fl',style:{color:'#fb923c'}},'🥉 3º Lugar'),sel3),
+      h('div',{'class':'fg'},h('label',{'class':'fl'},'Observações'),notesInp)
+    ),
+    h('div',{'class':'md-f'},
+      h('button',{'class':'btn',onclick:close},'Cancelar'),
+      h('button',{'class':'btn btn-p',onclick:function(){
+        if(!f.sportId){errDiv.style.display='block';errDiv.textContent='Selecione o esporte.';return}
+        if(!f.p1){errDiv.style.display='block';errDiv.textContent='Selecione o 1º lugar.';return}
+        if(!S.podiums)S.podiums=[];
+        S.podiums.push({id:uid(),sportId:f.sportId,category:f.category,year:f.year,p1:f.p1,p2:f.p2,p3:f.p3,notes:f.notes});
+        S.mod=null;R();
+      }},'Salvar Pódio')
+    )
+  ));
+  c.appendChild(ov);
+}
+
 function exportLogins(){
   var rows='';
   S.logins.forEach(function(l){
@@ -2925,7 +3178,8 @@ function getDbPayload(){
     data:JSON.stringify({
       cls:S.cls,spt:S.spt,enr:S.enr,brk:S.brk,locs:S.locs,
       ev:S.ev,logins:S.logins,judgeLogins:S.judgeLogins,recursos:S.recursos,adminPass:S.adminPass,
-      thirdPlace:S.thirdPlace,appInfo:S.appInfo
+      thirdPlace:S.thirdPlace,appInfo:S.appInfo,
+      scoring:S.scoring,podiums:S.podiums,woLog:S.woLog
     }),
     updated_at:new Date().toISOString()
   };
@@ -2976,7 +3230,7 @@ function loadFromSupabase(onDone){
     S.sb.syncing=false;
     if(rows&&rows.length&&rows[0].data){
       var d=JSON.parse(rows[0].data);
-      ['cls','spt','enr','brk','locs','ev','logins','judgeLogins','recursos','adminPass','thirdPlace','appInfo'].forEach(function(k){
+      ['cls','spt','enr','brk','locs','ev','logins','judgeLogins','recursos','adminPass','thirdPlace','appInfo','scoring','podiums','woLog'].forEach(function(k){
         if(d[k]!==undefined)S[k]=d[k];
       });
       // If school has a specific admin pass from master, use it
