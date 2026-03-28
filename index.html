@@ -126,18 +126,18 @@ tr:last-child td{border-bottom:0}
 /* ── MOBILE BOTTOM NAV ──────────────────────────────────────────── */
 .bnav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:150;
   background:var(--bg2);border-top:1px solid var(--bd);
-  padding:0 4px env(safe-area-inset-bottom,0);
+  padding:0 0 env(safe-area-inset-bottom,0);
   box-shadow:0 -4px 24px rgba(0,0,0,.25)}
-.bnav-inner{display:flex;align-items:stretch;overflow-x:auto;
-  -webkit-overflow-scrolling:touch;scrollbar-width:none;gap:2px}
+.bnav-inner{display:flex;align-items:stretch;justify-content:space-around;
+  scrollbar-width:none;gap:0}
 .bnav-inner::-webkit-scrollbar{display:none}
 .bnav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:3px;padding:8px 12px 10px;min-width:56px;flex-shrink:0;
+  gap:2px;padding:6px 4px 8px;flex:1;min-width:0;
   border:none;background:transparent;color:var(--tx3);cursor:pointer;
   font-family:inherit;transition:color .15s;-webkit-tap-highlight-color:transparent}
 .bnav-item.active{color:var(--pr)}
-.bnav-item .bi{font-size:20px;line-height:1}
-.bnav-item .bl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+.bnav-item .bi{font-size:18px;line-height:1}
+.bnav-item .bl{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 /* ── OVERLAY for sidebar on mobile ─────────────────────────────── */
 .sb-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99;
   backdrop-filter:blur(2px)}
@@ -436,7 +436,13 @@ var XLSXMini = {
 }
 
 
-var S={role:'admin',page:'dashboard',sbo:false,ev:{name:'Jogos Internos 2026'},cls:[],spt:[],enr:[],brk:{},locs:[],mod:null,bs:'',bc:'',rt:'class',theme:'dark',ir:null,bay:'',say:'',auth:null,logins:[],judgeLogins:[],recursos:[],adminPass:'admin123',loginErr:'',thirdPlace:{},nextGameAlert:null,appInfo:{author:'Rodolfo C. Pinheiro',contact:'rodolfinhocp@gmail.com',version:'3.0'},sb:{url:'',key:'',enabled:false,status:'',syncing:false}};
+var S={role:'admin',page:'dashboard',sbo:false,ev:{name:'Jogos Internos 2026'},cls:[],spt:[],enr:[],brk:{},locs:[],mod:null,bs:'',bc:'',rt:'class',theme:'dark',ir:null,bay:'',say:'',auth:null,logins:[],judgeLogins:[],recursos:[],adminPass:'admin123',loginErr:'',thirdPlace:{},nextGameAlert:null,appInfo:{author:'Rodolfo C. Pinheiro',contact:'rodolfinhocp@gmail.com',version:'3.1'},sb:{url:'https://omevoikikvkjshormjoh.supabase.co',key:'',enabled:true,status:'',syncing:false}};
+
+// *** SUPABASE AUTO-CONFIG ***
+// The publishable key is safe to embed (it's public, protected by RLS)
+// Paste your full key between the quotes below:
+var SB_DEFAULT_URL='https://omevoikikvkjshormjoh.supabase.co';
+var SB_DEFAULT_KEY='sb_publishable_PRKGKGJ-EeLO72d5yBiX1g_4ADC4p9F'; // Supabase publishable key
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MULTI-TENANT SYSTEM
@@ -465,9 +471,14 @@ function getSchoolDbId(){
 // MASTER PANEL RENDER
 // ═══════════════════════════════════════════════════════════════════════════
 function renderMasterLogin(root){
+  // Load saved master credentials from localStorage
+  try{
+    var saved=localStorage.getItem('ji_master_sb');
+    if(saved){var p=JSON.parse(saved);if(p.url)S.sb.url=p.url;if(p.key)S.sb.key=p.key;S.sb.enabled=true}
+  }catch(e){}
   root.innerHTML='';
   var wrap=h('div',{style:{minHeight:'100vh',width:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#0a0e1a 0%,#1a1040 60%,#0f172a 100%)',padding:'24px'}});
-  var card=h('div',{style:{background:'#111827',border:'1px solid #2d3a52',borderRadius:'20px',padding:'32px',width:'100%',maxWidth:'380px',boxShadow:'0 24px 64px rgba(0,0,0,.5)'}});
+  var card=h('div',{style:{background:'#111827',border:'1px solid #2d3a52',borderRadius:'20px',padding:'24px',width:'100%',maxWidth:'380px',boxShadow:'0 24px 64px rgba(0,0,0,.5)'}});
   wrap.appendChild(h('div',{style:{textAlign:'center',marginBottom:'36px'}},
     h('div',{style:{fontSize:'48px',marginBottom:'12px'}},'🔒'),
     h('h1',{style:{fontSize:'24px',fontWeight:'800',background:'linear-gradient(135deg,#f59e0b,#f87171)',webkitBackgroundClip:'text',webkitTextFillColor:'transparent',backgroundClip:'text'}},'Painel Master'),
@@ -489,6 +500,8 @@ function renderMasterLogin(root){
 
 function loadMasterData(){
   if(!S.sb.url||!S.sb.key){renderMasterPanel();return}
+  // Save credentials for next time
+  try{localStorage.setItem('ji_master_sb',JSON.stringify({url:S.sb.url,key:S.sb.key}))}catch(e){}
   fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.master_schools&select=data',{
     headers:{'apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key}
   }).then(function(r){return r.json()}).then(function(rows){
@@ -527,25 +540,27 @@ function saveMasterData(cb){
 }
 
 function renderMasterPanel(){
+  // Restore saved master credentials
+  try{var saved=localStorage.getItem('ji_master_sb');if(saved){var p=JSON.parse(saved);if(p.url&&!S.sb.url)S.sb.url=p.url;if(p.key&&!S.sb.key)S.sb.key=p.key;if(p.url&&p.key)S.sb.enabled=true}}catch(e){}
   var root=document.getElementById('app');root.innerHTML='';
   document.body.className=S.theme==='light'?'light':'';
   var wrap=h('div',{style:{minHeight:'100vh',background:'var(--bg)',padding:'0'}});
 
   // Topbar
-  var topbar=h('div',{style:{padding:'14px 24px',borderBottom:'1px solid var(--bd)',background:'var(--bg2)',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:'0',zIndex:'50'}},
-    h('div',{style:{display:'flex',alignItems:'center',gap:'10px'}},
-      h('span',{style:{fontSize:'20px'}},'🔒'),
-      h('span',{style:{fontSize:'17px',fontWeight:'800',background:'linear-gradient(135deg,#f59e0b,#f87171)',webkitBackgroundClip:'text',webkitTextFillColor:'transparent',backgroundClip:'text'}},'Painel Master')
+  var topbar=h('div',{style:{padding:'12px 16px',borderBottom:'1px solid var(--bd)',background:'var(--bg2)',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:'0',zIndex:'50',flexWrap:'wrap',gap:'8px'}},
+    h('div',{style:{display:'flex',alignItems:'center',gap:'8px'}},
+      h('span',{style:{fontSize:'18px'}},'🔒'),
+      h('span',{style:{fontSize:'15px',fontWeight:'800',background:'linear-gradient(135deg,#f59e0b,#f87171)',webkitBackgroundClip:'text',webkitTextFillColor:'transparent',backgroundClip:'text'}},'Painel Master')
     ),
-    h('div',{style:{display:'flex',gap:'6px',alignItems:'center'}},
-      h('button',{'class':'icon-btn',onclick:function(){S.theme=S.theme==='dark'?'light':'dark';document.body.className=S.theme==='light'?'light':'';renderMasterPanel()}},S.theme==='dark'?'☀️':'🌙'),
-      h('span',{'class':'badge',style:{background:'rgba(251,191,36,.12)',color:'#fbbf24'}},MT.schools.length+' escola(s)'),
+    h('div',{style:{display:'flex',gap:'5px',alignItems:'center',flexWrap:'wrap'}},
+      h('button',{'class':'icon-btn',style:{width:'32px',height:'32px',fontSize:'14px'},onclick:function(){S.theme=S.theme==='dark'?'light':'dark';document.body.className=S.theme==='light'?'light':'';renderMasterPanel()}},S.theme==='dark'?'☀️':'🌙'),
+      h('span',{'class':'badge',style:{background:'rgba(251,191,36,.12)',color:'#fbbf24',fontSize:'9px'}},MT.schools.length+' escola(s)'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){MT.masterAuth=false;R()}},'Sair')
     )
   );
   wrap.appendChild(topbar);
 
-  var content=h('div',{style:{padding:'20px 24px',maxWidth:'1100px',margin:'0 auto'}});
+  var content=h('div',{style:{padding:'16px',maxWidth:'1100px',margin:'0 auto'}});
 
   // Supabase config (if not set)
   if(!S.sb.url||!S.sb.key){
@@ -557,7 +572,7 @@ function renderMasterPanel(){
         h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.7'}},'O Painel Master precisa do Supabase para gerenciar escolas. Configure abaixo:'),
         h('div',{'class':'fg'},h('label',{'class':'fl'},'Project URL'),sbUrl),
         h('div',{'class':'fg'},h('label',{'class':'fl'},'Anon Key'),sbKey),
-        h('button',{'class':'btn btn-p',onclick:function(){S.sb.enabled=true;loadMasterData()}},'✅ Conectar e Carregar')
+        h('button',{'class':'btn btn-p',onclick:function(){S.sb.enabled=true;try{localStorage.setItem('ji_master_sb',JSON.stringify({url:S.sb.url,key:S.sb.key}))}catch(e){};loadMasterData()}},'✅ Conectar e Carregar')
       )
     ));
   }
@@ -612,7 +627,7 @@ function renderMasterPanel(){
         )
       ));
       // Stats row
-      card.appendChild(h('div',{'class':'card-b',style:{padding:'10px 16px',display:'flex',gap:'20px',flexWrap:'wrap',fontSize:'12px',color:'var(--tx2)'}},
+      card.appendChild(h('div',{'class':'card-b',style:{padding:'10px 16px',display:'flex',gap:'10px',flexWrap:'wrap',fontSize:'12px',color:'var(--tx2)'}},
         h('span',null,'📚 '+(stats.turmas||0)+' turmas'),
         h('span',null,'⚽ '+(stats.esportes||0)+' esportes'),
         h('span',null,'📋 '+(stats.equipes||0)+' equipes'),
@@ -855,12 +870,12 @@ function R(){
           h('div',{style:{fontSize:'9px',color:'var(--tx3)'}},S.appInfo.contact||''),
           h('div',{style:{fontSize:'9px',color:'var(--tx3)',marginTop:'1px'}},'Jogos Internos v'+S.appInfo.version)
         ),
-        h('button',{
+        S.role==='admin'?h('button',{
           'class':'icon-btn',
           style:{width:'28px',height:'28px',fontSize:'13px',flexShrink:'0'},
           title:'Configurações',
           onclick:function(){S.mod={tp:'settings'};R()}
-        },'⚙️')
+        },'⚙️'):null
       ),
       // Supabase sync status dot
       S.sb.enabled?h('div',{style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'9px',color:S.sb.status==='ok'?'#34d399':S.sb.status==='error'?'#f87171':'#64748b'}},
@@ -911,9 +926,15 @@ function R(){
   // Sidebar overlay (mobile tap-to-close)
   var sbOverlay=h('div',{'class':'sb-overlay'+(S.sbo?' show':''),onclick:function(){S.sbo=false;R()}});
 
-  // Bottom navigation bar (mobile only)
+  // Bottom navigation bar (mobile only) - show max 5 key items
   var bnavInner=h('div',{'class':'bnav-inner'});
-  nav.forEach(function(item){
+  var bnavItems=nav;
+  if(S.role==='admin'){
+    // Admin: show only key pages in bottom nav (sidebar has all)
+    var bnavIds=['dashboard','enrollments','brackets','schedule','ranking'];
+    bnavItems=nav.filter(function(n){return bnavIds.indexOf(n.id)>=0});
+  }
+  bnavItems.forEach(function(item){
     bnavInner.appendChild(h('button',{
       'class':'bnav-item'+(S.page===item.id?' active':''),
       onclick:(function(id){return function(){S.page=id;S.sbo=false;R()}})(item.id)
@@ -3123,19 +3144,33 @@ function mSettings(root){
 
 R();
 
-// If school mode with Supabase, check if school is active
-if(MT.schoolCode&&S.sb.url&&S.sb.key){
-  fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.master_schools&select=data',{
-    headers:{'apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key}
-  }).then(function(r){return r.json()}).then(function(rows){
-    if(rows&&rows.length&&rows[0].data){
-      try{
-        var schools=JSON.parse(rows[0].data);
-        var mine=schools.find(function(s){return s.code===MT.schoolCode});
-        if(mine&&mine.status==='inactive'){MT.schoolBlocked=true;R()}
-      }catch(e){}
+// *** AUTO-CONNECT: Apply default Supabase credentials if not set ***
+if(SB_DEFAULT_KEY){
+  if(!S.sb.url)S.sb.url=SB_DEFAULT_URL;
+  if(!S.sb.key)S.sb.key=SB_DEFAULT_KEY;
+  S.sb.enabled=true;
+}
+
+// *** AUTO-LOAD: If school mode OR regular mode with Supabase, load data ***
+if(S.sb.url&&S.sb.key){
+  // For schools, load their scoped data
+  loadFromSupabase(function(ok){
+    if(ok){R()}
+    // Also check if school is active
+    if(MT.schoolCode){
+      fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.master_schools&select=data',{
+        headers:{'apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key}
+      }).then(function(r){return r.json()}).then(function(rows){
+        if(rows&&rows.length&&rows[0].data){
+          try{
+            var schools=JSON.parse(rows[0].data);
+            var mine=schools.find(function(s){return s.code===MT.schoolCode});
+            if(mine&&mine.status==='inactive'){MT.schoolBlocked=true;R()}
+          }catch(e){}
+        }
+      }).catch(function(){});
     }
-  }).catch(function(){});
+  });
 }
 </script>
 </body>
