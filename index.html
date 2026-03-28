@@ -1606,15 +1606,16 @@ function mRes(c){
       // W.O. Section
       h('div',{style:{marginTop:'14px',padding:'12px',background:'var(--rdG)',borderRadius:'var(--r)',border:'1px solid var(--rd)'}},
         h('div',{style:{fontSize:'11px',fontWeight:'700',color:'var(--rd)',marginBottom:'8px',textAlign:'center'}},'⚠️ W.O. (Ausência de time)'),
-        h('div',{style:{display:'flex',gap:'8px',justifyContent:'center'}},
+        h('div',{style:{display:'flex',gap:'8px',justifyContent:'center',flexWrap:'wrap'}},
           h('button',{'class':'btn btn-s btn-r',onclick:function(){
-            // WO for team 1 - team 2 wins
             applyWO(m,m.t1,m.t2);
           }},'W.O. '+tName(m.t1)),
           h('button',{'class':'btn btn-s btn-r',onclick:function(){
-            // WO for team 2 - team 1 wins
             applyWO(m,m.t2,m.t1);
-          }},'W.O. '+tName(m.t2))
+          }},'W.O. '+tName(m.t2)),
+          h('button',{'class':'btn btn-s',style:{background:'var(--rdG)',color:'var(--rd)',borderColor:'var(--rd)'},onclick:function(){
+            applyWOBoth(m);
+          }},'W.O. Ambos')
         )
       )
     ),
@@ -1808,17 +1809,28 @@ function applyAutoSchedule(bkey,ct,date,startTime,dur,interval,location){
 // ══════════════════════════════════════════════════════════════════════════
 function applyWO(m,absentTeam,winnerTeam){
   if(!confirm('Confirmar W.O.?\n\nAusente: '+tName(absentTeam)+'\nVencedor: '+tName(winnerTeam)))return;
-  // Set score as 0x0 but with winner and WO flag
   S.brk[S.mod.si][S.mod.ct]=S.brk[S.mod.si][S.mod.ct].map(function(r){return Object.assign({},r,{m:r.m.map(function(x){
     if(x.id===m.id)return Object.assign({},x,{s1:0,s2:0,w:winnerTeam,wo:absentTeam});
     if(x.t1==='W_'+m.id)return Object.assign({},x,{t1:winnerTeam});
     if(x.t2==='W_'+m.id)return Object.assign({},x,{t2:winnerTeam});
     return x;
   })})});
-  // Log the WO
   if(!S.woLog)S.woLog=[];
   S.woLog.push({matchId:m.id,teamId:absentTeam,winnerId:winnerTeam,date:new Date().toLocaleString('pt-BR')});
   notifyNextGame(S.mod.si,S.mod.ct,m.id);
+  S.mod=null;R();
+}
+
+function applyWOBoth(m){
+  if(!confirm('W.O. para AMBOS os times?\n\n'+tName(m.t1)+' e '+tName(m.t2)+'\n\nNenhum avança. Ambos recebem penalidade.'))return;
+  // No winner advances - mark match as completed with no winner advancing
+  S.brk[S.mod.si][S.mod.ct]=S.brk[S.mod.si][S.mod.ct].map(function(r){return Object.assign({},r,{m:r.m.map(function(x){
+    if(x.id===m.id)return Object.assign({},x,{s1:0,s2:0,w:'WO_BOTH',wo:'both'});
+    return x;
+  })})});
+  if(!S.woLog)S.woLog=[];
+  S.woLog.push({matchId:m.id,teamId:m.t1,winnerId:null,type:'both',date:new Date().toLocaleString('pt-BR')});
+  S.woLog.push({matchId:m.id,teamId:m.t2,winnerId:null,type:'both',date:new Date().toLocaleString('pt-BR')});
   S.mod=null;R();
 }
 
@@ -3190,7 +3202,9 @@ function syncToSupabase(manual){
     if(manual)alert('Configure a URL e a chave do Supabase primeiro (⚙️ Configurações).');
     return;
   }
-  S.sb.syncing=true;R();
+  S.sb.syncing=true;
+  // Only re-render if no modal is open (prevents destroying user input)
+  if(!S.mod)R();
   var payload=getDbPayload();
   fetch(S.sb.url+'/rest/v1/jogos_data',{
     method:'POST',
@@ -3209,10 +3223,10 @@ function syncToSupabase(manual){
       S.sb.status='error';
       res.text().then(function(t){console.error('Supabase error:',t)});
     }
-    R();
+    if(!S.mod)R();
   }).catch(function(err){
     S.sb.syncing=false;S.sb.status='error';
-    console.error('Supabase sync failed:',err);R();
+    console.error('Supabase sync failed:',err);if(!S.mod)R();
   });
 }
 
