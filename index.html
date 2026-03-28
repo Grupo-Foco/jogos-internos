@@ -104,8 +104,8 @@ tr:last-child td{border-bottom:0}
 .rp{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;font-family:'Space Mono',monospace;flex-shrink:0}
 .r1{background:linear-gradient(135deg,var(--g1),var(--g2));color:var(--rt)}.r2{background:linear-gradient(135deg,var(--s1),var(--s2));color:var(--rt)}.r3{background:linear-gradient(135deg,var(--b1),var(--b2));color:var(--rt)}.ro{background:var(--bg4);color:var(--tx2)}
 .rn{flex:1;font-weight:600;font-size:13px}.rs{font-size:10px;color:var(--tx3)}.rv{font-family:'Space Mono',monospace;font-weight:700;font-size:14px;color:var(--pr)}
-.ov{position:fixed;inset:0;background:var(--ov);backdrop-filter:blur(3px);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px}
-.md{background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rL);width:100%;max-width:460px;max-height:85vh;overflow-y:auto}
+.ov{position:fixed;inset:0;background:var(--ov);backdrop-filter:blur(3px);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding:16px;padding-top:5vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.md{background:var(--bg2);border:1px solid var(--bd);border-radius:var(--rL);width:100%;max-width:460px;max-height:none;overflow-y:visible;margin-bottom:40vh}
 .md-h{padding:12px 16px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between}
 .md-t{font-size:15px;font-weight:700}.md-b{padding:16px}
 .md-f{padding:8px 16px;border-top:1px solid var(--bd);display:flex;gap:6px;justify-content:flex-end}
@@ -852,7 +852,7 @@ function R(){
 
   if(!S.auth){renderLogin(root);return;}
 
-  var aN=[{id:'dashboard',l:'Dashboard',e:'🏠',s:'Geral'},{id:'classes',l:'Turmas',e:'🏫',s:'Cadastros'},{id:'sports',l:'Esportes',e:'⚽',s:'Cadastros'},{id:'venues',l:'Locais',e:'📍',s:'Cadastros'},{id:'enrollments',l:'Inscrições',e:'📋',s:'Competição'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Competição'},{id:'schedule',l:'Agenda',e:'📅',s:'Competição'},{id:'conflicts',l:'Conflitos',e:'⚠️',s:'Competição'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'},{id:'logins',l:'Logins',e:'🔑',s:'Acesso'},{id:'settings_page',l:'Config',e:'⚙️',s:'Acesso'}];
+  var aN=[{id:'dashboard',l:'Dashboard',e:'🏠',s:'Geral'},{id:'classes',l:'Turmas',e:'🏫',s:'Cadastros'},{id:'sports',l:'Esportes',e:'⚽',s:'Cadastros'},{id:'venues',l:'Locais',e:'📍',s:'Cadastros'},{id:'enrollments',l:'Inscrições',e:'📋',s:'Competição'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Competição'},{id:'schedule',l:'Agenda',e:'📅',s:'Competição'},{id:'conflicts',l:'Conflitos',e:'⚠️',s:'Competição'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'},{id:'logins',l:'Logins',e:'🔑',s:'Acesso'}];
   var sN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'enroll',l:'Inscrever',e:'📋',s:'Ações'},{id:'brackets',l:'Jogos',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'}];
   var jN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'recursos',l:'Recursos',e:'📝',s:'Ações'}];
   var nav=S.role==='admin'?aN:S.role==='judge'?jN:sN;
@@ -879,23 +879,14 @@ function R(){
       })
     ),
     h('div',{'class':'sb-footer',style:{padding:'12px 10px',display:'flex',flexDirection:'column',gap:'6px'}},
-      h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between'}},
-        h('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}},
-          h('div',{style:{fontWeight:'700',fontSize:'10px',color:'var(--tx2)',letterSpacing:'.3px'}},S.appInfo.author||'Autor'),
-          h('div',{style:{fontSize:'9px',color:'var(--tx3)'}},S.appInfo.contact||''),
-          h('div',{style:{fontSize:'9px',color:'var(--tx3)',marginTop:'1px'}},'Jogos Internos v'+S.appInfo.version)
-        ),
-        S.role==='admin'?h('button',{
-          'class':'icon-btn',
-          style:{width:'28px',height:'28px',fontSize:'13px',flexShrink:'0'},
-          title:'Configurações',
-          onclick:function(){S.mod={tp:'settings'};R()}
-        },'⚙️'):null
+      h('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}},
+        h('div',{style:{fontWeight:'700',fontSize:'10px',color:'var(--tx2)',letterSpacing:'.3px'}},'Rodolfo C. Pinheiro'),
+        h('div',{style:{fontSize:'9px',color:'var(--tx3)'}},'rodolfinhocp@gmail.com')
       ),
-      // Supabase sync status dot
+      // Online status
       S.sb.enabled?h('div',{style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'9px',color:S.sb.status==='ok'?'#34d399':S.sb.status==='error'?'#f87171':'#64748b'}},
-        h('span',{style:{width:'6px',height:'6px',borderRadius:'50%',flexShrink:'0',display:'inline-block',background:S.sb.status==='ok'?'#34d399':S.sb.status==='error'?'#f87171':'#94a3b8'}}),
-        S.sb.syncing?'Sincronizando...':S.sb.status==='ok'?'Supabase: OK':S.sb.status==='error'?'Erro de sync':'Supabase: configurado'
+        h('span',{style:{width:'6px',height:'6px',borderRadius:'50%',flexShrink:'0',display:'inline-block',background:S.sb.syncing?'#fbbf24':S.sb.status==='ok'?'#34d399':S.sb.status==='error'?'#f87171':'#94a3b8',animation:S.sb.syncing?'pulse 1s infinite':''}}),
+        S.sb.syncing?'Sincronizando...':S.sb.status==='ok'?'Online':S.sb.status==='error'?'Erro de conexão':'Conectando...'
       ):null
     )
   ];
@@ -1526,8 +1517,13 @@ function mRes(c){
 
   function makeScoreInput(val, onChange){
     var inp=h('input',{type:'number','class':'fi score-input',
+      inputmode:'numeric',pattern:'[0-9]*',
       style:{textAlign:'center',fontSize:'28px',fontFamily:"'Space Mono'",fontWeight:'800',maxWidth:'90px',margin:'0 auto',padding:'10px'},
       value:''+val, min:'0',
+      onfocus:function(e){
+        // Scroll input into view when keyboard opens (tablet/mobile)
+        setTimeout(function(){e.target.scrollIntoView({behavior:'smooth',block:'center'})},300);
+      },
       oninput:function(e){
         var v=parseInt(e.target.value);
         if(isNaN(v)||v<0){e.target.value='0';v=0;}
