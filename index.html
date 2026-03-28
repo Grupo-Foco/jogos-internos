@@ -158,14 +158,23 @@ tr:last-child td{border-bottom:0}
   .md{max-width:100%;max-height:92vh;border-radius:20px 20px 0 0;border-bottom:none;align-self:flex-end}
   .g2,.g3{grid-template-columns:1fr}
   .sgrid{grid-template-columns:1fr 1fr}
-  .content{padding:10px 12px}
+  .content{padding:10px 10px}
   .fr{flex-direction:column;gap:0}
   .brd{min-width:155px}
   .bte{padding:5px 7px;font-size:11px}
   .sc-v{font-size:20px}
+  .sc-l{font-size:9px}
+  .sc{padding:10px}
   .rr{padding:7px 10px}
   .card-h{padding:9px 12px}
-  .card-b{padding:11px}
+  .card-b{padding:10px}
+  .card-t{font-size:13px}
+  .banner{padding:12px}
+  .banner h3{font-size:13px}
+  .banner .btn-d{font-size:10px;padding:7px 10px}
+  .topbar{padding:8px 10px;padding-top:max(8px,env(safe-area-inset-top,8px))}
+  .tp-l .page-title{font-size:13px}
+  .menu-btn{width:30px;height:30px;font-size:16px}
 }
 /* ── ALL MOBILE (≤768px) ───────────────────────────────────────── */
 @media(max-width:768px){
@@ -173,20 +182,26 @@ tr:last-child td{border-bottom:0}
   .sidebar.open{transform:translateX(0)}
   .sb-overlay.show{display:block}
   .main{margin-left:0;width:100%;padding-bottom:68px}
-  .topbar{padding:10px 14px}
-  .tp-l .page-title{font-size:15px}
+  .topbar{padding:10px 12px;padding-top:max(10px,env(safe-area-inset-top,10px));gap:6px}
+  .tp-l .page-title{font-size:14px}
   .topbar-r .badge{display:none}
-  .topbar-r .sync-indicator{display:none}
+  .topbar-r .sync-indicator{font-size:9px!important;padding:3px 6px!important}
+  .topbar-r .btn{padding:4px 8px;font-size:10px}
   .menu-btn{display:flex!important}
   .bnav{display:block}
   .banner{flex-direction:column;align-items:flex-start;gap:10px;padding:14px}
+  .banner .btn-d{font-size:11px;padding:8px 12px}
   .tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
   .tabs::-webkit-scrollbar{display:none}
   .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
   td,th{padding:7px 8px;font-size:12px}
   .btn-d{font-size:12px;padding:9px 14px}
   .rr{padding:8px 10px}
-  .topbar-r .icon-btn{width:32px;height:32px;font-size:14px}
+  .topbar-r .icon-btn{width:30px;height:30px;font-size:13px}
+  .content{padding:14px 12px}
+  .sgrid{gap:8px}
+  .sc{padding:12px}
+  .sc-v{font-size:22px}
   /* Bracket scroll indicator */
   .bw{position:relative}
   .bw::after{content:'→';position:absolute;right:0;top:50%;transform:translateY(-50%);
