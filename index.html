@@ -848,7 +848,11 @@ function calcCR(){
       if(pod[k]){pts[pod[k]]=(pts[pod[k]]||0)+(sc[k]||0)}
     }
   });
-  return Object.entries(pts).map(function(entry){var id=entry[0],p=entry[1];return{id:id,nm:(S.cls.find(function(x){return x.id===id})||{nm:'—'}).nm,p:p}}).sort(function(a,b){return b.p-a.p})
+  // Add recurso punishment points
+  (S.recursos||[]).forEach(function(rec){
+    if(rec.punishClassId&&rec.punishPts){pts[rec.punishClassId]=(pts[rec.punishClassId]||0)+rec.punishPts}
+  });
+  return Object.entries(pts).map(function(entry){var id=entry[0],p=entry[1];var cl=S.cls.find(function(x){return x.id===id});return{id:id,nm:cl?cl.nm:'—',yr:cl?cl.yr:'',p:p}}).sort(function(a,b){return b.p-a.p})
 }
 
 function h(tag,attrs){
@@ -1050,19 +1054,36 @@ function pD(c){
   ));
 
   var g=h('div',{'class':'g2'});
-  [['🏆 Turmas',cr,function(r){return h('div',{'class':'rn'},r.nm)}],
-   ['⚡ Equipes',rk,function(r){return h('div',{style:{flex:'1'}},h('div',{'class':'rn'},r.tn),h('div',{'class':'rs'},r.cn+' · '+r.sn))}]
-  ].forEach(function(item){
-    var title=item[0],data=item[1],fn=item[2];
-    var card=h('div',{'class':'card'},h('div',{'class':'card-h'},h('div',{'class':'card-t'},title)));
-    var body=h('div',{style:{padding:'0'}});
-    if(!data.length)body.appendChild(h('div',{'class':'em'},'Sem resultados'));
-    else data.slice(0,5).forEach(function(r,i){
-      body.appendChild(h('div',{'class':'rr'},h('div',{'class':'rp '+(i<3?'r'+(i+1):'ro')},''+(i+1)),fn(r),h('div',{'class':'rv'},r.p+' pts')));
-    });
-    card.appendChild(body);
-    g.appendChild(card);
+  // Turmas ranking - show by year with top 8
+  var anos=getAnos();
+  var crCard=h('div',{'class':'card'});
+  crCard.appendChild(h('div',{'class':'card-h'},h('div',{'class':'card-t'},'🏆 Turmas')));
+  if(anos.length>1){
+    // Year tabs for class ranking
+    var ytabs=h('div',{style:{display:'flex',gap:'2px',padding:'8px 12px',flexWrap:'wrap'}});
+    ytabs.appendChild(h('button',{'class':'tab'+(S.bay===''?' active':''),style:{padding:'4px 10px',fontSize:'11px'},onclick:function(){S.bay='';R()}},'Todos'));
+    anos.forEach(function(a){ytabs.appendChild(h('button',{'class':'tab'+(S.bay===a?' active':''),style:{padding:'4px 10px',fontSize:'11px'},onclick:(function(y){return function(){S.bay=y;R()}})(a)},a))});
+    crCard.appendChild(ytabs);
+  }
+  var crFiltered=S.bay?cr.filter(function(r){return r.yr===S.bay}):cr;
+  var crBody=h('div',{style:{padding:'0'}});
+  if(!crFiltered.length)crBody.appendChild(h('div',{'class':'em'},'Sem resultados'));
+  else crFiltered.slice(0,8).forEach(function(r,i){
+    crBody.appendChild(h('div',{'class':'rr'},h('div',{'class':'rp '+(i<3?'r'+(i+1):'ro')},''+(i+1)),h('div',{'class':'rn'},r.nm+(r.yr?' · '+r.yr:'')),h('div',{'class':'rv'},r.p+' pts')));
   });
+  crCard.appendChild(crBody);
+  g.appendChild(crCard);
+
+  // Equipes ranking - top 8
+  var eqCard=h('div',{'class':'card'},h('div',{'class':'card-h'},h('div',{'class':'card-t'},'⚡ Equipes')));
+  var eqBody=h('div',{style:{padding:'0'}});
+  var rkFiltered=S.bay?rk.filter(function(r){var e=S.enr.find(function(z){return z.id===r.id});var cl=e&&S.cls.find(function(x){return x.id===e.ci});return cl&&cl.yr===S.bay}):rk;
+  if(!rkFiltered.length)eqBody.appendChild(h('div',{'class':'em'},'Sem resultados'));
+  else rkFiltered.slice(0,8).forEach(function(r,i){
+    eqBody.appendChild(h('div',{'class':'rr'},h('div',{'class':'rp '+(i<3?'r'+(i+1):'ro')},''+(i+1)),h('div',{style:{flex:'1'}},h('div',{'class':'rn'},r.tn),h('div',{'class':'rs'},r.cn+' · '+r.sn)),h('div',{'class':'rv'},r.p+' pts')));
+  });
+  eqCard.appendChild(eqBody);
+  g.appendChild(eqCard);
   c.appendChild(g);
 }
 
@@ -1314,10 +1335,10 @@ function pB(c){
       var clickable=can&&!(m.t1.startsWith('L_')&&tName(m.t1)==='Perdedor Semi');
       col.appendChild(h('div',{'class':'brm',style:{cursor:clickable?'pointer':'default'},
         onclick:clickable?(function(mm){return function(){S.mod={tp:'res',m:mm,si:bkey,ct:S.bc};R()}})(m):null},
-        h('div',{'class':'bte'+(m.w===m.t1?' win':'')+(m.t1==='BYE'?' bye':'')+(m.wo===m.t1?' wo':'')},h('span',{},tName(m.t1),m.cards&&m.cards[m.t1]?h('span',{style:{marginLeft:'4px',fontSize:'10px'}},
-          (m.cards[m.t1].y?'🟨':'')+(m.cards[m.t1].r?'🟥':'')):null),m.wo===m.t1?h('span',{style:{fontSize:'9px',marginLeft:'4px',color:'var(--rd)'}},'W.O.'):null,m.s1!=null?h('span',{'class':'bsc'},''+m.s1):null),
-        h('div',{'class':'bte'+(m.w===m.t2?' win':'')+(m.t2==='BYE'?' bye':'')+(m.wo===m.t2?' wo':'')},h('span',{},tName(m.t2),m.cards&&m.cards[m.t2]?h('span',{style:{marginLeft:'4px',fontSize:'10px'}},
-          (m.cards[m.t2].y?'🟨':'')+(m.cards[m.t2].r?'🟥':'')):null),m.wo===m.t2?h('span',{style:{fontSize:'9px',marginLeft:'4px',color:'var(--rd)'}},'W.O.'):null,m.s2!=null?h('span',{'class':'bsc'},''+m.s2):null)
+        h('div',{'class':'bte'+(m.w===m.t1?' win':'')+(m.t1==='BYE'?' bye':'')+(m.wo===m.t1?' wo':'')},h('span',{},tName(m.t1),m.cards&&m.cards[m.t1]&&(m.cards[m.t1].y||m.cards[m.t1].r)?h('span',{style:{marginLeft:'4px',fontSize:'9px'}},
+          (m.cards[m.t1].y?'🟨'+m.cards[m.t1].y+' ':'')+(m.cards[m.t1].r?'🟥'+m.cards[m.t1].r:'')):null),m.wo===m.t1?h('span',{style:{fontSize:'9px',marginLeft:'4px',color:'var(--rd)'}},'W.O.'):null,m.s1!=null?h('span',{'class':'bsc'},''+m.s1):null),
+        h('div',{'class':'bte'+(m.w===m.t2?' win':'')+(m.t2==='BYE'?' bye':'')+(m.wo===m.t2?' wo':'')},h('span',{},tName(m.t2),m.cards&&m.cards[m.t2]&&(m.cards[m.t2].y||m.cards[m.t2].r)?h('span',{style:{marginLeft:'4px',fontSize:'9px'}},
+          (m.cards[m.t2].y?'🟨'+m.cards[m.t2].y+' ':'')+(m.cards[m.t2].r?'🟥'+m.cards[m.t2].r:'')):null),m.wo===m.t2?h('span',{style:{fontSize:'9px',marginLeft:'4px',color:'var(--rd)'}},'W.O.'):null,m.s2!=null?h('span',{'class':'bsc'},''+m.s2):null)
       ));
     });
     br.appendChild(col);
@@ -1562,7 +1583,8 @@ function mRes(c){
   var ov=h('div',{'class':'ov'});ov.onclick=function(e){if(e.target===ov){S.mod=null;R()}};
   var close=function(){S.mod=null;R()};
   var errDiv=h('div',{style:{display:'none',color:'#f87171',fontSize:'12px',textAlign:'center',marginBottom:'8px'}});
-  var cardState={t1y:m.cards&&m.cards[m.t1]?m.cards[m.t1].y:false,t1r:m.cards&&m.cards[m.t1]?m.cards[m.t1].r:false,t2y:m.cards&&m.cards[m.t2]?m.cards[m.t2].y:false,t2r:m.cards&&m.cards[m.t2]?m.cards[m.t2].r:false};
+  var cardState={t1y:m.cards&&m.cards[m.t1]?m.cards[m.t1].y||0:0,t1r:m.cards&&m.cards[m.t1]?m.cards[m.t1].r||0:0,t2y:m.cards&&m.cards[m.t2]?m.cards[m.t2].y||0:0,t2r:m.cards&&m.cards[m.t2]?m.cards[m.t2].r||0:0};
+  var t1yDisp,t1rDisp,t2yDisp,t2rDisp;
 
   function makeScoreInput(val, onChange){
     var inp=h('input',{type:'number','class':'fi score-input',
@@ -1609,20 +1631,40 @@ function mRes(c){
       h('div',{style:{fontSize:'11px',color:'var(--tx3)',textAlign:'center'}},'Pontuação mínima: 0. Empate não é permitido.'),
       // Cards section
       h('div',{style:{marginTop:'12px',padding:'10px',background:'var(--bg3)',borderRadius:'var(--r)',border:'1px solid var(--bd)'}},
-        h('div',{style:{fontSize:'11px',fontWeight:'700',color:'var(--tx3)',marginBottom:'8px',textAlign:'center'}},'Cartões'),
+        h('div',{style:{fontSize:'11px',fontWeight:'700',color:'var(--tx3)',marginBottom:'8px',textAlign:'center'}},'Cartões (clique + para adicionar, - para remover)'),
         h('div',{style:{display:'flex',gap:'16px',justifyContent:'center'}},
           h('div',{style:{textAlign:'center',flex:'1'}},
-            h('div',{style:{fontSize:'11px',color:'var(--tx2)',marginBottom:'4px'}},tName(m.t1)),
-            h('div',{style:{display:'flex',gap:'6px',justifyContent:'center'}},
-              h('button',{'class':'btn btn-s',style:{fontSize:'14px',background:cardState.t1y?'#fbbf24':'var(--bg3)',padding:'4px 8px'},onclick:function(){cardState.t1y=!cardState.t1y}},'🟨'),
-              h('button',{'class':'btn btn-s',style:{fontSize:'14px',background:cardState.t1r?'#f87171':'var(--bg3)',padding:'4px 8px'},onclick:function(){cardState.t1r=!cardState.t1r}},'🟥')
+            h('div',{style:{fontSize:'11px',color:'var(--tx2)',marginBottom:'6px',fontWeight:'600'}},tName(m.t1)),
+            h('div',{style:{display:'flex',gap:'8px',justifyContent:'center',alignItems:'center'}},
+              h('div',{style:{display:'flex',alignItems:'center',gap:'3px'}},
+                h('button',{'class':'btn btn-s',style:{padding:'2px 6px',fontSize:'10px'},onclick:function(){if(cardState.t1y>0){cardState.t1y--;t1yDisp.textContent=cardState.t1y}}},'−'),
+                h('span',{style:{fontSize:'16px'}},'🟨'),
+                (function(){var sp=h('span',{style:{fontWeight:'800',fontSize:'14px',minWidth:'16px',textAlign:'center'}},String(cardState.t1y));t1yDisp=sp;return sp})(),
+                h('button',{'class':'btn btn-s',style:{padding:'2px 6px',fontSize:'10px'},onclick:function(){cardState.t1y++;t1yDisp.textContent=cardState.t1y}},'+')
+              ),
+              h('div',{style:{display:'flex',alignItems:'center',gap:'3px'}},
+                h('button',{'class':'btn btn-s',style:{padding:'2px 6px',fontSize:'10px'},onclick:function(){if(cardState.t1r>0){cardState.t1r--;t1rDisp.textContent=cardState.t1r}}},'−'),
+                h('span',{style:{fontSize:'16px'}},'🟥'),
+                (function(){var sp=h('span',{style:{fontWeight:'800',fontSize:'14px',minWidth:'16px',textAlign:'center'}},String(cardState.t1r));t1rDisp=sp;return sp})(),
+                h('button',{'class':'btn btn-s',style:{padding:'2px 6px',fontSize:'10px'},onclick:function(){cardState.t1r++;t1rDisp.textContent=cardState.t1r}},'+')
+              )
             )
           ),
           h('div',{style:{textAlign:'center',flex:'1'}},
-            h('div',{style:{fontSize:'11px',color:'var(--tx2)',marginBottom:'4px'}},tName(m.t2)),
-            h('div',{style:{display:'flex',gap:'6px',justifyContent:'center'}},
-              h('button',{'class':'btn btn-s',style:{fontSize:'14px',background:cardState.t2y?'#fbbf24':'var(--bg3)',padding:'4px 8px'},onclick:function(){cardState.t2y=!cardState.t2y}},'🟨'),
-              h('button',{'class':'btn btn-s',style:{fontSize:'14px',background:cardState.t2r?'#f87171':'var(--bg3)',padding:'4px 8px'},onclick:function(){cardState.t2r=!cardState.t2r}},'🟥')
+            h('div',{style:{fontSize:'11px',color:'var(--tx2)',marginBottom:'6px',fontWeight:'600'}},tName(m.t2)),
+            h('div',{style:{display:'flex',gap:'8px',justifyContent:'center',alignItems:'center'}},
+              h('div',{style:{display:'flex',alignItems:'center',gap:'3px'}},
+                h('button',{'class':'btn btn-s',style:{padding:'2px 6px',fontSize:'10px'},onclick:function(){if(cardState.t2y>0){cardState.t2y--;t2yDisp.textContent=cardState.t2y}}},'−'),
+                h('span',{style:{fontSize:'16px'}},'🟨'),
+                (function(){var sp=h('span',{style:{fontWeight:'800',fontSize:'14px',minWidth:'16px',textAlign:'center'}},String(cardState.t2y));t2yDisp=sp;return sp})(),
+                h('button',{'class':'btn btn-s',style:{padding:'2px 6px',fontSize:'10px'},onclick:function(){cardState.t2y++;t2yDisp.textContent=cardState.t2y}},'+')
+              ),
+              h('div',{style:{display:'flex',alignItems:'center',gap:'3px'}},
+                h('button',{'class':'btn btn-s',style:{padding:'2px 6px',fontSize:'10px'},onclick:function(){if(cardState.t2r>0){cardState.t2r--;t2rDisp.textContent=cardState.t2r}}},'−'),
+                h('span',{style:{fontSize:'16px'}},'🟥'),
+                (function(){var sp=h('span',{style:{fontWeight:'800',fontSize:'14px',minWidth:'16px',textAlign:'center'}},String(cardState.t2r));t2rDisp=sp;return sp})(),
+                h('button',{'class':'btn btn-s',style:{padding:'2px 6px',fontSize:'10px'},onclick:function(){cardState.t2r++;t2rDisp.textContent=cardState.t2r}},'+')
+              )
             )
           )
         )
@@ -1703,16 +1745,20 @@ function mAutoSch(c){
       var end=new Date(start.getTime()+dur*60000);
       var startStr=start.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
       var endStr=end.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-      // Conflict check: do t1/t2 turmas play elsewhere in this window?
       var hasConflict=checkConflict(m,start,end,bkey,ct);
+      var venueBusy=f.location?checkVenueBusy(f.location,start,end,m.id):[];
       if(hasConflict)conflict=true;
-      var row=h('div',{style:{padding:'3px 0',borderBottom:'1px solid var(--bd)',color:hasConflict?'#f87171':'var(--tx2)'}},
-        h('b',{style:{fontFamily:'monospace',color:hasConflict?'#f87171':'var(--pr)'}},startStr+'-'+endStr),
-        ' '+tName(m.t1)+' × '+tName(m.t2)+(m.is3rd?' (3º lugar)':'')+(hasConflict?' ⚠️ CONFLITO':'')
+      var warnings=[];
+      if(hasConflict)warnings.push('⚠️ CONFLITO DE TURMA');
+      if(venueBusy.length)warnings.push('🏟️ LOCAL OCUPADO ('+venueBusy.map(function(b){return(b.sport?b.sport.nm:'')+' '+b.cat}).join(', ')+')');
+      var row=h('div',{style:{padding:'3px 0',borderBottom:'1px solid var(--bd)',color:hasConflict?'#f87171':venueBusy.length?'#fbbf24':'var(--tx2)'}},
+        h('b',{style:{fontFamily:'monospace',color:hasConflict?'#f87171':venueBusy.length?'#fbbf24':'var(--pr)'}},startStr+'-'+endStr),
+        ' '+tName(m.t1)+' × '+tName(m.t2)+(m.is3rd?' (3º lugar)':''),
+        warnings.length?h('div',{style:{fontSize:'10px',color:hasConflict?'#f87171':'#fbbf24',marginLeft:'4px'}},warnings.join(' | ')):null
       );
       previewDiv.appendChild(row);
     });
-    if(conflict)previewDiv.appendChild(h('div',{style:{color:'#f87171',fontSize:'11px',marginTop:'6px'}},'⚠️ Há conflitos de horário. Ajuste o horário de início ou o intervalo.'));
+    if(conflict)previewDiv.appendChild(h('div',{style:{color:'#f87171',fontSize:'11px',marginTop:'6px'}},'⚠️ Há conflitos de turma. 3ºA Masc não pode jogar 2 esportes ao mesmo tempo. 3ºA Fem pode, pois são alunos diferentes.'));
     return !conflict;
   }
 
@@ -1779,17 +1825,18 @@ function mAutoSch(c){
 
 // Check if a match's teams have a conflicting match in the same time window (other sports)
 function checkConflict(match,startDt,endDt,skipBkey,skipCt){
-  // Get class IDs for t1 and t2
+  // Get class IDs and categories for t1 and t2
   var e1=S.enr.find(function(e){return e.id===match.t1});
   var e2=S.enr.find(function(e){return e.id===match.t2});
   var ci1=e1&&e1.ci, ci2=e2&&e2.ci;
+  var cat1=e1&&e1.ct, cat2=e2&&e2.ct; // Masculino/Feminino/Misto
   if(!ci1&&!ci2)return false;
   var conflict=false;
   Object.entries(S.brk).forEach(function(bkEntry){
     var bk=bkEntry[0],cts=bkEntry[1];
     Object.entries(cts).forEach(function(ctEntry){
       var ct=ctEntry[0],rds=ctEntry[1];
-      if(bk===skipBkey&&ct===skipCt)return; // skip self
+      if(bk===skipBkey&&ct===skipCt)return;
       rds.forEach(function(rd){rd.m.forEach(function(m){
         if(!m.dt)return;
         var ms=new Date(m.dt);
@@ -1798,18 +1845,44 @@ function checkConflict(match,startDt,endDt,skipBkey,skipCt){
         });
         var d2=(sp2&&sp2.dur)||14;
         var me=new Date(ms.getTime()+d2*60000);
-        // Check overlap: [ms,me] overlaps [startDt,endDt]?
         if(ms<endDt&&me>startDt){
-          // Check if any team shares a turma
           var em1=S.enr.find(function(e){return e.id===m.t1});
           var em2=S.enr.find(function(e){return e.id===m.t2});
           var cm1=em1&&em1.ci, cm2=em2&&em2.ci;
-          if((ci1&&(ci1===cm1||ci1===cm2))||(ci2&&(ci2===cm1||ci2===cm2)))conflict=true;
+          var ccat=ctEntry[0]; // category of the other match
+          // Conflict: same turma AND same category (masc vs masc = conflict, masc vs fem = ok)
+          if(ci1&&(ci1===cm1||ci1===cm2)){
+            // Check if categories overlap (same gender = students overlap)
+            if(cat1===ccat||cat1==='Misto'||ccat==='Misto')conflict=true;
+          }
+          if(ci2&&(ci2===cm1||ci2===cm2)){
+            if(cat2===ccat||cat2==='Misto'||ccat==='Misto')conflict=true;
+          }
         }
       })});
     });
   });
   return conflict;
+}
+
+// Check if a venue is busy at a given time (returns array of matches using that venue)
+function checkVenueBusy(location,startDt,endDt,skipMatchId){
+  if(!location)return[];
+  var busy=[];
+  Object.entries(S.brk).forEach(function(bkEntry){
+    Object.entries(bkEntry[1]).forEach(function(ctEntry){
+      ctEntry[1].forEach(function(rd){rd.m.forEach(function(m){
+        if(!m.dt||!m.lc||m.id===skipMatchId)return;
+        if(m.lc.toLowerCase()!==location.toLowerCase())return;
+        var sp2=S.spt.find(function(s){var p=bkEntry[0].split('__');return s.id===(p.length>1?p[1]:p[0])});
+        var d2=(sp2&&sp2.dur)||14;
+        var ms=new Date(m.dt);
+        var me=new Date(ms.getTime()+d2*60000);
+        if(ms<endDt&&me>startDt)busy.push({match:m,sport:sp2,cat:ctEntry[0]});
+      })});
+    });
+  });
+  return busy;
 }
 
 function applyAutoSchedule(bkey,ct,date,startTime,dur,interval,location){
@@ -2619,28 +2692,52 @@ function pRecursos(c){
       );
       // Admin actions
       if(S.role==='admin'&&(rec.status==='pending'||!rec.status)){
-        var adminResp=h('input',{'class':'fi',placeholder:'Resposta do admin (opcional)',style:{marginTop:'10px',marginBottom:'8px'}});
+        var adminResp=h('input',{'class':'fi',placeholder:'Resposta do admin (opcional)',style:{marginTop:'10px',marginBottom:'6px'}});
+        // Punishment: select turma + points
+        var punishCls=h('select',{'class':'fs',style:{maxWidth:'180px'}},h('option',{value:''},'Nenhuma punição'));
+        S.cls.forEach(function(cl){punishCls.appendChild(h('option',{value:cl.id},cl.nm))});
+        var punishPts=h('input',{'class':'fi',type:'number',inputmode:'numeric',placeholder:'-5',style:{maxWidth:'80px'},value:rec.punishPts||''});
         body.appendChild(adminResp);
+        body.appendChild(h('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'8px',flexWrap:'wrap'}},
+          h('span',{style:{fontSize:'11px',color:'var(--tx3)',fontWeight:'600'}},'Punição:'),
+          punishCls,
+          h('span',{style:{fontSize:'11px',color:'var(--tx3)'}},'Pontos:'),
+          punishPts
+        ));
         body.appendChild(h('div',{style:{display:'flex',gap:'6px',justifyContent:'flex-end'}},
-          h('button',{'class':'btn btn-g btn-s',onclick:(function(rid,respInp){return function(){
+          h('button',{'class':'btn btn-g btn-s',onclick:(function(rid,respInp,pCls,pPts){return function(){
             var r2=S.recursos.find(function(x){return x.id===rid});
-            if(r2){r2.status='approved';r2.adminResp=respInp.value.trim();r2.resolvedAt=new Date().toLocaleString('pt-BR')}R();
-          }})(rec.id,adminResp)},'✅ Deferir'),
-          h('button',{'class':'btn btn-r btn-s',onclick:(function(rid,respInp){return function(){
+            if(r2){r2.status='approved';r2.adminResp=respInp.value.trim();r2.resolvedAt=new Date().toLocaleString('pt-BR');
+              if(pCls.value){r2.punishClassId=pCls.value;r2.punishPts=parseInt(pPts.value)||0}}R();
+          }})(rec.id,adminResp,punishCls,punishPts)},'✅ Deferir'),
+          h('button',{'class':'btn btn-r btn-s',onclick:(function(rid,respInp,pCls,pPts){return function(){
             var r2=S.recursos.find(function(x){return x.id===rid});
-            if(r2){r2.status='rejected';r2.adminResp=respInp.value.trim();r2.resolvedAt=new Date().toLocaleString('pt-BR')}R();
-          }})(rec.id,adminResp)},'❌ Indeferir')
+            if(r2){r2.status='rejected';r2.adminResp=respInp.value.trim();r2.resolvedAt=new Date().toLocaleString('pt-BR');
+              if(pCls.value){r2.punishClassId=pCls.value;r2.punishPts=parseInt(pPts.value)||0}}R();
+          }})(rec.id,adminResp,punishCls,punishPts)},'❌ Indeferir')
+        ));
+      }
+      // Edit button for admin on resolved recursos
+      if(S.role==='admin'&&rec.status&&rec.status!=='pending'){
+        body.appendChild(h('div',{style:{marginTop:'6px',display:'flex',justifyContent:'flex-end'}},
+          h('button',{'class':'btn btn-s',onclick:(function(rid){return function(){
+            var r2=S.recursos.find(function(x){return x.id===rid});
+            if(r2){r2.status='pending';r2.adminResp='';r2.resolvedAt='';r2.punishClassId='';r2.punishPts=0}R();
+          }})(rec.id)},'✏️ Editar / Reabrir')
         ));
       }
       // Show admin response if resolved
-      if(rec.adminResp){
+      if(rec.adminResp||rec.punishClassId){
+        var punishCl=rec.punishClassId?S.cls.find(function(x){return x.id===rec.punishClassId}):null;
         body.appendChild(h('div',{style:{marginTop:'10px',padding:'10px 14px',borderRadius:'8px',
           background:rec.status==='approved'?'var(--gnG)':'var(--rdG)',
           border:'1px solid '+(rec.status==='approved'?'var(--gn)':'var(--rd)'),
           fontSize:'12px',lineHeight:'1.6'}},
           h('b',{style:{color:rec.status==='approved'?'var(--gn)':'var(--rd)'}},rec.status==='approved'?'✅ Deferido':'❌ Indeferido'),
           rec.resolvedAt?h('span',{style:{color:'var(--tx3)',marginLeft:'8px',fontSize:'11px'}},rec.resolvedAt):null,
-          rec.adminResp?h('div',{style:{marginTop:'4px',color:'var(--tx2)'}},rec.adminResp):null
+          rec.adminResp?h('div',{style:{marginTop:'4px',color:'var(--tx2)'}},rec.adminResp):null,
+          punishCl?h('div',{style:{marginTop:'6px',padding:'6px 10px',background:'var(--rdG)',borderRadius:'6px',color:'var(--rd)',fontWeight:'700'}},
+            '⚠️ Punição: '+punishCl.nm+' → '+(rec.punishPts||0)+' pontos'):null
         ));
       }
       card.appendChild(header);
