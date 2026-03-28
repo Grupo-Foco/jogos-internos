@@ -467,7 +467,7 @@ function getSchoolDbId(){
 function renderMasterLogin(root){
   root.innerHTML='';
   var wrap=h('div',{style:{minHeight:'100vh',width:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#0a0e1a 0%,#1a1040 60%,#0f172a 100%)',padding:'24px'}});
-  var card=h('div',{style:{background:'#111827',border:'1px solid #2d3a52',borderRadius:'20px',padding:'32px',width:'100%',maxWidth:'380px',boxShadow:'0 24px 64px rgba(0,0,0,.5)'}});
+  var card=h('div',{style:{background:'#111827',border:'1px solid #2d3a52',borderRadius:'20px',padding:'24px',width:'100%',maxWidth:'380px',boxShadow:'0 24px 64px rgba(0,0,0,.5)'}});
   wrap.appendChild(h('div',{style:{textAlign:'center',marginBottom:'36px'}},
     h('div',{style:{fontSize:'48px',marginBottom:'12px'}},'🔒'),
     h('h1',{style:{fontSize:'24px',fontWeight:'800',background:'linear-gradient(135deg,#f59e0b,#f87171)',webkitBackgroundClip:'text',webkitTextFillColor:'transparent',backgroundClip:'text'}},'Painel Master'),
@@ -532,20 +532,20 @@ function renderMasterPanel(){
   var wrap=h('div',{style:{minHeight:'100vh',background:'var(--bg)',padding:'0'}});
 
   // Topbar
-  var topbar=h('div',{style:{padding:'14px 24px',borderBottom:'1px solid var(--bd)',background:'var(--bg2)',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:'0',zIndex:'50'}},
-    h('div',{style:{display:'flex',alignItems:'center',gap:'10px'}},
-      h('span',{style:{fontSize:'20px'}},'🔒'),
-      h('span',{style:{fontSize:'17px',fontWeight:'800',background:'linear-gradient(135deg,#f59e0b,#f87171)',webkitBackgroundClip:'text',webkitTextFillColor:'transparent',backgroundClip:'text'}},'Painel Master')
+  var topbar=h('div',{style:{padding:'12px 16px',borderBottom:'1px solid var(--bd)',background:'var(--bg2)',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:'0',zIndex:'50',flexWrap:'wrap',gap:'8px'}},
+    h('div',{style:{display:'flex',alignItems:'center',gap:'8px'}},
+      h('span',{style:{fontSize:'18px'}},'🔒'),
+      h('span',{style:{fontSize:'15px',fontWeight:'800',background:'linear-gradient(135deg,#f59e0b,#f87171)',webkitBackgroundClip:'text',webkitTextFillColor:'transparent',backgroundClip:'text'}},'Painel Master')
     ),
-    h('div',{style:{display:'flex',gap:'6px',alignItems:'center'}},
-      h('button',{'class':'icon-btn',onclick:function(){S.theme=S.theme==='dark'?'light':'dark';document.body.className=S.theme==='light'?'light':'';renderMasterPanel()}},S.theme==='dark'?'☀️':'🌙'),
-      h('span',{'class':'badge',style:{background:'rgba(251,191,36,.12)',color:'#fbbf24'}},MT.schools.length+' escola(s)'),
+    h('div',{style:{display:'flex',gap:'5px',alignItems:'center',flexWrap:'wrap'}},
+      h('button',{'class':'icon-btn',style:{width:'32px',height:'32px',fontSize:'14px'},onclick:function(){S.theme=S.theme==='dark'?'light':'dark';document.body.className=S.theme==='light'?'light':'';renderMasterPanel()}},S.theme==='dark'?'☀️':'🌙'),
+      h('span',{'class':'badge',style:{background:'rgba(251,191,36,.12)',color:'#fbbf24',fontSize:'9px'}},MT.schools.length+' escola(s)'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){MT.masterAuth=false;R()}},'Sair')
     )
   );
   wrap.appendChild(topbar);
 
-  var content=h('div',{style:{padding:'20px 24px',maxWidth:'1100px',margin:'0 auto'}});
+  var content=h('div',{style:{padding:'16px',maxWidth:'1100px',margin:'0 auto'}});
 
   // Supabase config (if not set)
   if(!S.sb.url||!S.sb.key){
@@ -612,7 +612,7 @@ function renderMasterPanel(){
         )
       ));
       // Stats row
-      card.appendChild(h('div',{'class':'card-b',style:{padding:'10px 16px',display:'flex',gap:'20px',flexWrap:'wrap',fontSize:'12px',color:'var(--tx2)'}},
+      card.appendChild(h('div',{'class':'card-b',style:{padding:'10px 16px',display:'flex',gap:'10px',flexWrap:'wrap',fontSize:'12px',color:'var(--tx2)'}},
         h('span',null,'📚 '+(stats.turmas||0)+' turmas'),
         h('span',null,'⚽ '+(stats.esportes||0)+' esportes'),
         h('span',null,'📋 '+(stats.equipes||0)+' equipes'),
@@ -911,9 +911,15 @@ function R(){
   // Sidebar overlay (mobile tap-to-close)
   var sbOverlay=h('div',{'class':'sb-overlay'+(S.sbo?' show':''),onclick:function(){S.sbo=false;R()}});
 
-  // Bottom navigation bar (mobile only)
+  // Bottom navigation bar (mobile only) - show max 5 key items
   var bnavInner=h('div',{'class':'bnav-inner'});
-  nav.forEach(function(item){
+  var bnavItems=nav;
+  if(S.role==='admin'){
+    // Admin: show only key pages in bottom nav (sidebar has all)
+    var bnavIds=['dashboard','enrollments','brackets','schedule','ranking'];
+    bnavItems=nav.filter(function(n){return bnavIds.indexOf(n.id)>=0});
+  }
+  bnavItems.forEach(function(item){
     bnavInner.appendChild(h('button',{
       'class':'bnav-item'+(S.page===item.id?' active':''),
       onclick:(function(id){return function(){S.page=id;S.sbo=false;R()}})(item.id)
