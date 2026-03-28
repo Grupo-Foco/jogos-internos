@@ -1006,8 +1006,8 @@ function R(){
   root.appendChild(mainDiv);
   root.appendChild(bnav);
   if(S.mod&&S.mod.tp==='settings')mSettings(root);
-  // Auto-save to Supabase on state change
-  scheduleSave();
+  // Auto-save to Supabase on state change (but not during modals to prevent input loss)
+  if(!S.mod)scheduleSave();
 }
 
 function pD(c){
@@ -1331,7 +1331,7 @@ function pB(c){
     var col=h('div',{'class':'brd'},h('div',{'class':'brt'},rName(rd.r,rds.length)));
     (rd.m||[]).filter(Boolean).forEach(function(m){
       if(m.is3rd)return; // render 3rd separately below
-      var can=S.role==='admin'&&m.t1!=='BYE'&&m.t2!=='BYE'&&!m.t1.startsWith('W_')&&!m.t2.startsWith('W_');
+      var can=(S.role==='admin'||S.role==='judge')&&m.t1!=='BYE'&&m.t2!=='BYE'&&!m.t1.startsWith('W_')&&!m.t2.startsWith('W_');
       var clickable=can&&!(m.t1.startsWith('L_')&&tName(m.t1)==='Perdedor Semi');
       col.appendChild(h('div',{'class':'brm',style:{cursor:clickable?'pointer':'default'},
         onclick:clickable?(function(mm){return function(){S.mod={tp:'res',m:mm,si:bkey,ct:S.bc};R()}})(m):null},
@@ -1347,7 +1347,7 @@ function pB(c){
   // 3rd place column
   if(thirdMatch){
     var col3=h('div',{'class':'brd'},h('div',{'class':'brt'},'3º Lugar'));
-    var can3=S.role==='admin'&&tName(thirdMatch.t1)!=='Perdedor Semi'&&tName(thirdMatch.t2)!=='Perdedor Semi';
+    var can3=(S.role==='admin'||S.role==='judge')&&tName(thirdMatch.t1)!=='Perdedor Semi'&&tName(thirdMatch.t2)!=='Perdedor Semi';
     col3.appendChild(h('div',{'class':'brm',style:{cursor:can3?'pointer':'default',border:'1px solid rgba(251,191,36,.4)'},
       onclick:can3?(function(mm){return function(){S.mod={tp:'res',m:mm,si:bkey,ct:S.bc};R()}})(thirdMatch):null},
       h('div',{'class':'bte'+(thirdMatch.w===thirdMatch.t1?' win':'')},h('span',{},tName(thirdMatch.t1)),thirdMatch.s1!=null?h('span',{'class':'bsc'},''+thirdMatch.s1):null),
