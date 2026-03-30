@@ -1418,7 +1418,7 @@ function pSc(c){
   // Export button
   var hdr=h('div',{style:{display:'flex',justifyContent:'flex-end',gap:'8px',marginBottom:'12px',flexWrap:'wrap'}});
   // Conflict badge on button
-  var cfCount=getAllConflicts().conflicts.length;
+  var cfCount=S.role==='admin'?getAllConflicts().conflicts.length:0;
   if(cfCount>0)hdr.appendChild(h('button',{
     'class':'btn btn-r',
     onclick:function(){S.page='conflicts';R();}
@@ -2179,11 +2179,14 @@ function exportBracket(ano,bsid,bcat){
   rds.forEach(function(rd){
     rounds+='<div class="round"><div class="rtitle">'+rName(rd.r,rds.length)+'</div>';
     rd.m.forEach(function(m){
-      var w1=m.w===m.t1?' winner':'',b1=m.t1==='BYE'?' bye':'';
-      var w2=m.w===m.t2?' winner':'',b2=m.t2==='BYE'?' bye':'';
+      var w1=m.w===m.t1?' winner':'',b1=m.t1==='BYE'?' bye':'',wo1=m.wo===m.t1?' wo':'';
+      var w2=m.w===m.t2?' winner':'',b2=m.t2==='BYE'?' bye':'',wo2=m.wo===m.t2?' wo':'';
+      var c1='',c2='';
+      if(m.cards&&m.cards[m.t1]){if(m.cards[m.t1].y)c1+=' 🟨'+m.cards[m.t1].y;if(m.cards[m.t1].r)c1+=' 🟥'+m.cards[m.t1].r}
+      if(m.cards&&m.cards[m.t2]){if(m.cards[m.t2].y)c2+=' 🟨'+m.cards[m.t2].y;if(m.cards[m.t2].r)c2+=' 🟥'+m.cards[m.t2].r}
       rounds+='<div class="match">'
-        +'<div class="team'+w1+b1+'"><span>'+tName(m.t1)+'</span>'+(m.s1!=null?'<b>'+m.s1+'</b>':'')+'</div>'
-        +'<div class="team'+w2+b2+'"><span>'+tName(m.t2)+'</span>'+(m.s2!=null?'<b>'+m.s2+'</b>':'')+'</div>'
+        +'<div class="team'+w1+b1+wo1+'"><span>'+tName(m.t1)+c1+(m.wo===m.t1?' <small style="color:#f87171">W.O.</small>':'')+'</span>'+(m.s1!=null?'<b>'+m.s1+'</b>':'')+'</div>'
+        +'<div class="team'+w2+b2+wo2+'"><span>'+tName(m.t2)+c2+(m.wo===m.t2?' <small style="color:#f87171">W.O.</small>':'')+'</span>'+(m.s2!=null?'<b>'+m.s2+'</b>':'')+'</div>'
         +'</div>';
     });
     rounds+='</div>';
@@ -2206,6 +2209,7 @@ function exportBracket(ano,bsid,bcat){
     +'.team.bye{color:#475569;font-style:italic}'
     +'.team b{font-family:monospace;font-size:16px;font-weight:800;color:#f1f5f9}'
     +'.team.winner b{color:#34d399}'
+    +'.team.wo{background:rgba(248,113,113,.15);color:#f87171;text-decoration:line-through}'
     +'footer{margin-top:36px;font-size:11px;color:#334155;text-align:center}'
     +'</style></head><body>'
     +'<h1>'+title+'</h1>'
@@ -2964,6 +2968,9 @@ function mAddPodium(c){
   ov.appendChild(h('div',{'class':'md'},h('div',{'class':'md-h'},h('div',{'class':'md-t'},'🏅 Novo Pódio Individual'),h('button',{'class':'btn btn-s',onclick:close},'✕')),h('div',{'class':'md-b'},bf),h('div',{'class':'md-f'},h('button',{'class':'btn',onclick:close},'Cancelar'),h('button',{'class':'btn btn-p',onclick:function(){
     if(!f.sportId){errDiv.style.display='block';errDiv.textContent='Selecione o esporte.';return}
     if(!f.p1){errDiv.style.display='block';errDiv.textContent='Selecione ao menos o 1º lugar.';return}
+    // Check for duplicate turmas in different positions
+    var used={};var dup=false;
+    for(var i=1;i<=8;i++){var v=f['p'+i];if(v){if(used[v]){dup=true;var cn=S.cls.find(function(x){return x.id===v});errDiv.style.display='block';errDiv.textContent='A turma "'+(cn?cn.nm:'?')+'" já está em outra posição. Cada turma pode aparecer apenas uma vez.';return}used[v]=true}}
     if(!S.podiums)S.podiums=[];
     S.podiums.push({id:uid(),sportId:f.sportId,category:f.category,year:f.year,p1:f.p1,p2:f.p2,p3:f.p3,p4:f.p4,p5:f.p5,p6:f.p6,p7:f.p7,p8:f.p8,notes:f.notes});
     S.mod=null;R();
