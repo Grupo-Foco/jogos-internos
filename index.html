@@ -1783,13 +1783,14 @@ function mAutoSch(c){
         (function(){
           if(!S.locs.length){
             // No venues registered: free text
-            return h('input',{'class':'fi',value:f.location,placeholder:'Ex: Campo Society',oninput:function(e){f.location=e.target.value}});
+            return h('input',{'class':'fi',value:f.location,placeholder:'Ex: Campo Society',oninput:function(e){f.location=e.target.value;buildPreview()}});
           }
           // Build a select with registered venues + custom option
           var sel=h('select',{'class':'fs',onchange:function(e){
             f.location=e.target.value;
             if(e.target.value==='__custom__'){customInp.style.display='block';}
             else{customInp.style.display='none';customInp.value='';}
+            buildPreview();
           }});
           sel.appendChild(h('option',{value:''},'Selecione um local...'));
           S.locs.forEach(function(l){
@@ -1801,7 +1802,7 @@ function mAutoSch(c){
           sel.appendChild(h('option',{value:'__custom__'},'✏️ Outro (digitar)...'));
           var customInp=h('input',{'class':'fi',placeholder:'Nome do local...',
             style:{display:'none',marginTop:'6px'},
-            oninput:function(e){f.location=e.target.value}});
+            oninput:function(e){f.location=e.target.value;buildPreview()}});
           var wrap=h('div',{},sel,customInp);
           return wrap;
         })()
@@ -3291,8 +3292,9 @@ function syncToSupabase(manual){
     return;
   }
   S.sb.syncing=true;
-  // Only re-render if no modal is open (prevents destroying user input)
-  if(!S.mod)R();
+  // Don't re-render if modal open OR any input/select is focused (prevents data loss)
+  var hasFocus=document.activeElement&&(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='SELECT'||document.activeElement.tagName==='TEXTAREA');
+  if(!S.mod&&!hasFocus)R();
   var payload=getDbPayload();
   fetch(S.sb.url+'/rest/v1/jogos_data',{
     method:'POST',
@@ -3311,10 +3313,12 @@ function syncToSupabase(manual){
       S.sb.status='error';
       res.text().then(function(t){console.error('Supabase error:',t)});
     }
-    if(!S.mod)R();
+    var hf2=document.activeElement&&(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='SELECT'||document.activeElement.tagName==='TEXTAREA');
+    if(!S.mod&&!hf2)R();
   }).catch(function(err){
     S.sb.syncing=false;S.sb.status='error';
-    console.error('Supabase sync failed:',err);if(!S.mod)R();
+    console.error('Supabase sync failed:',err);
+    if(!S.mod)R();
   });
 }
 
