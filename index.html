@@ -1466,22 +1466,210 @@ function pR(c){
     anos.forEach(function(a){ytabs.appendChild(h('button',{'class':'tab'+(S.bay===a?' active':''),onclick:(function(y){return function(){S.bay=y;R()}})(a)},a))});
     c.appendChild(ytabs);
   }
-  // Filter by year if selected
   var rkF=S.bay?rk.filter(function(r){var e=S.enr.find(function(z){return z.id===r.id});var cl=e&&S.cls.find(function(x){return x.id===e.ci});return cl&&cl.yr===S.bay}):rk;
   var crF=S.bay?cr.filter(function(r){var cl=S.cls.find(function(x){return x.id===r.id});return cl&&cl.yr===S.bay}):cr;
 
-  c.appendChild(h('div',{'class':'tabs'},
-    h('button',{'class':'tab'+(S.rt==='class'?' active':''),onclick:function(){S.rt='class';R()}},'Turmas'),
-    h('button',{'class':'tab'+(S.rt==='team'?' active':''),onclick:function(){S.rt='team';R()}},'Equipes')
+  c.appendChild(h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px',flexWrap:'wrap',gap:'8px'}},
+    h('div',{'class':'tabs',style:{marginBottom:'0'}},
+      h('button',{'class':'tab'+(S.rt==='class'?' active':''),onclick:function(){S.rt='class';R()}},'Turmas'),
+      h('button',{'class':'tab'+(S.rt==='team'?' active':''),onclick:function(){S.rt='team';R()}},'Equipes')
+    ),
+    S.role==='admin'?h('button',{'class':'btn btn-p btn-s',onclick:function(){exportRankingDetail(crF)}},'📊 Exportar Detalhado'):null
   ));
+
   var ls=S.rt==='class'?crF:rkF;
   var body=h('div',{style:{padding:'0'}});
   if(!ls.length)body.appendChild(h('div',{'class':'em'},'Sem resultados'));
   else ls.forEach(function(r,i){
-    if(S.rt==='class')body.appendChild(h('div',{'class':'rr'},h('div',{'class':'rp '+(i<3?'r'+(i+1):'ro')},''+(i+1)),h('div',{'class':'rn'},r.nm),h('div',{'class':'rv'},r.p+' pts')));
-    else body.appendChild(h('div',{'class':'rr'},h('div',{'class':'rp '+(i<3?'r'+(i+1):'ro')},''+(i+1)),h('div',{style:{flex:'1'}},h('div',{'class':'rn'},r.tn),h('div',{'class':'rs'},r.cn+' · '+r.sn+' · '+r.w+'V')),h('div',{'class':'rv'},r.p+' pts')));
+    if(S.rt==='class'){
+      var detail=calcClassDetail(r.id);
+      var row=h('div',{style:{borderBottom:'1px solid var(--bd)'}});
+      var mainRow=h('div',{'class':'rr',style:{cursor:'pointer',borderBottom:'none'},onclick:function(){
+        var dd=row.querySelector('.detail-expand');
+        if(dd)dd.style.display=dd.style.display==='none'?'block':'none';
+      }},
+        h('div',{'class':'rp '+(i<3?'r'+(i+1):'ro')},''+(i+1)),
+        h('div',{style:{flex:'1'}},
+          h('div',{'class':'rn'},r.nm+(r.yr?' · '+r.yr:'')),
+          h('div',{style:{fontSize:'10px',color:'var(--tx3)',marginTop:'2px'}},detail.summary)
+        ),
+        h('div',{'class':'rv'},r.p+' pts'),
+        h('span',{style:{fontSize:'10px',color:'var(--tx3)',marginLeft:'6px'}},'▼')
+      );
+      var detailDiv=h('div',{'class':'detail-expand',style:{display:'none',padding:'8px 16px 12px 48px',fontSize:'11px',color:'var(--tx2)',lineHeight:'1.8',background:'var(--bg3)',borderRadius:'0 0 var(--r) var(--r)'}});
+      detail.lines.forEach(function(line){
+        detailDiv.appendChild(h('div',{style:{display:'flex',justifyContent:'space-between',padding:'2px 0',borderBottom:'1px solid var(--bd)'}},
+          h('span',{html:line.desc}),
+          h('span',{style:{fontWeight:'700',color:line.pts>=0?'var(--gn)':'var(--rd)',fontFamily:"'Space Mono'",fontSize:'11px'}},(line.pts>=0?'+':'')+line.pts)
+        ));
+      });
+      if(!detail.lines.length)detailDiv.appendChild(h('div',{style:{color:'var(--tx3)',fontStyle:'italic'}},'Sem pontuação detalhada'));
+      detailDiv.appendChild(h('div',{style:{marginTop:'6px',fontWeight:'700',textAlign:'right',fontSize:'12px',color:'var(--pr)'}},'Total: '+r.p+' pts'));
+      row.appendChild(mainRow);
+      row.appendChild(detailDiv);
+      body.appendChild(row);
+    } else {
+      body.appendChild(h('div',{'class':'rr'},h('div',{'class':'rp '+(i<3?'r'+(i+1):'ro')},''+(i+1)),h('div',{style:{flex:'1'}},h('div',{'class':'rn'},r.tn),h('div',{'class':'rs'},r.cn+' · '+r.sn+' · '+r.w+'V'+(r.wo?' · W.O.:'+r.wo:''))),h('div',{'class':'rv'},r.p+' pts')));
+    }
   });
   c.appendChild(h('div',{'class':'card'},body));
+}
+
+// Calculate detailed point breakdown per class
+function calcClassDetail(classId){
+  var sc=S.scoring||{p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1,pWin:3,pWO:-2};
+  var lines=[];
+  var totalWins=0,totalWO=0;
+
+  // Points from bracket: wins per sport
+  var sportWins={};
+  var sportPositions={};
+  Object.entries(S.brk).forEach(function(e1){
+    var bk=e1[0],cts=e1[1];
+    var parts=bk.split('__');
+    var siId=parts.length>1?parts[1]:parts[0];
+    var sp=S.spt.find(function(s){return s.id===siId});
+    var spName=sp?sp.nm:'?';
+    Object.entries(cts).forEach(function(e2){
+      var ct=e2[0],rs=e2[1];
+      // Count wins for this class in this sport+category
+      var wins=0,wos=0;
+      rs.forEach(function(r){r.m.forEach(function(m){
+        if(m.w&&m.w!=='BYE'){
+          var we=S.enr.find(function(e){return e.id===m.w});
+          if(we&&we.ci===classId){wins++}
+        }
+        if(m.wo){
+          var woe=S.enr.find(function(e){return e.id===m.wo});
+          if(woe&&woe.ci===classId){wos++}
+        }
+      })});
+      if(wins>0){
+        var key=spName+' '+ct;
+        lines.push({desc:'⚽ <b>'+key+'</b> — '+wins+' vitória(s)',pts:wins*(sc.pWin||0)});
+        totalWins+=wins;
+      }
+      if(wos>0){
+        lines.push({desc:'🔴 <b>'+spName+' '+ct+'</b> — '+wos+' W.O.',pts:wos*(sc.pWO||0)});
+        totalWO+=wos;
+      }
+      // Position points (1st/2nd/3rd/4th from finals)
+      if(rs.length){
+        var finalRound=rs[rs.length-1];
+        if(finalRound&&finalRound.m){
+          var finalM=finalRound.m.find(function(m){return!m.is3rd});
+          var thirdM=finalRound.m.find(function(m){return m.is3rd});
+          if(finalM&&finalM.w){
+            var checkPos=function(teamId,pos,label){
+              var te=S.enr.find(function(e){return e.id===teamId});
+              if(te&&te.ci===classId&&teamId!=='BYE'&&teamId.indexOf('W_')!==0&&teamId.indexOf('L_')!==0){
+                var pk='p'+pos;
+                if(sc[pk])lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+label,pts:sc[pk]});
+              }
+            };
+            checkPos(finalM.w,1,'1º Lugar');
+            var second=finalM.w===finalM.t1?finalM.t2:finalM.t1;
+            checkPos(second,2,'2º Lugar');
+          }
+          if(thirdM&&thirdM.w){
+            var checkPos3=function(teamId,pos,label){
+              var te=S.enr.find(function(e){return e.id===teamId});
+              if(te&&te.ci===classId&&teamId!=='BYE'&&teamId.indexOf('L_')!==0){
+                var pk='p'+pos;
+                if(sc[pk])lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+label,pts:sc[pk]});
+              }
+            };
+            checkPos3(thirdM.w,3,'3º Lugar');
+            var fourth=thirdM.w===thirdM.t1?thirdM.t2:thirdM.t1;
+            checkPos3(fourth,4,'4º Lugar');
+          }
+        }
+      }
+    });
+  });
+
+  // Podium points (individual sports)
+  var posLabels=['','1º Lugar','2º Lugar','3º Lugar','4º Lugar','5º Lugar','6º Lugar','7º Lugar','8º Lugar'];
+  (S.podiums||[]).forEach(function(pod){
+    var sp=S.spt.find(function(s){return s.id===pod.sportId});
+    var spName=sp?sp.nm:'Individual';
+    for(var i=1;i<=8;i++){
+      if(pod['p'+i]===classId&&sc['p'+i]){
+        lines.push({desc:'🏅 <b>'+spName+(pod.category?' '+pod.category:'')+'</b> — '+posLabels[i],pts:sc['p'+i]});
+      }
+    }
+  });
+
+  // Recurso punishments
+  (S.recursos||[]).forEach(function(rec){
+    if(rec.punishClassId===classId&&rec.punishPts){
+      lines.push({desc:'📝 <b>Recurso</b> — Punição'+(rec.adminResp?' ('+rec.adminResp+')':''),pts:rec.punishPts});
+    }
+  });
+
+  var summary=totalWins+'V'+(totalWO?' '+totalWO+'WO':'')+(lines.length?' · '+lines.length+' item(ns)':'');
+  return{lines:lines,summary:summary};
+}
+
+// Export detailed ranking as standalone HTML
+function exportRankingDetail(crData){
+  var sc=S.scoring||{p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1,pWin:3,pWO:-2};
+  var rows='';
+  crData.forEach(function(r,i){
+    var detail=calcClassDetail(r.id);
+    rows+='<div class="turma"><div class="turma-head"><span class="pos pos'+(i<3?i+1:9)+'">'+(i+1)+'</span><span class="nome">'+r.nm+'</span><span class="total">'+r.p+' pts</span></div>';
+    rows+='<table><thead><tr><th>Origem</th><th>Pontos</th></tr></thead><tbody>';
+    detail.lines.forEach(function(line){
+      rows+='<tr><td>'+line.desc+'</td><td class="'+(line.pts>=0?'pos-pts':'neg-pts')+'">'+(line.pts>=0?'+':'')+line.pts+'</td></tr>';
+    });
+    rows+='<tr class="total-row"><td><b>TOTAL</b></td><td><b>'+r.p+'</b></td></tr>';
+    rows+='</tbody></table></div>';
+  });
+  var out='<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">'
+    +'<meta name="viewport" content="width=device-width,initial-scale=1">'
+    +'<title>Ranking Detalhado — '+S.ev.name+'</title>'
+    +'<style>'
+    +'*{margin:0;padding:0;box-sizing:border-box}'
+    +'body{font-family:Arial,sans-serif;background:#0a0e1a;color:#f1f5f9;padding:28px;min-height:100vh}'
+    +'h1{font-size:22px;font-weight:800;margin-bottom:4px;color:#22d3ee}'
+    +'.sub{font-size:12px;color:#64748b;margin-bottom:28px}'
+    +'.turma{background:#111827;border:1px solid #2d3a52;border-radius:12px;margin-bottom:16px;overflow:hidden}'
+    +'.turma-head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid #2d3a52}'
+    +'.pos{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;color:#fff;flex-shrink:0}'
+    +'.pos1{background:#f59e0b}.pos2{background:#94a3b8}.pos3{background:#fb923c}.pos9{background:#475569}'
+    +'.nome{flex:1;font-weight:700;font-size:15px}'
+    +'.total{font-size:18px;font-weight:800;color:#22d3ee;font-family:monospace}'
+    +'table{width:100%;border-collapse:collapse}'
+    +'th{text-align:left;padding:8px 18px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#64748b;border-bottom:1px solid #2d3a52}'
+    +'td{padding:8px 18px;font-size:12px;border-bottom:1px solid #1a2236}'
+    +'td:last-child{text-align:right;font-family:monospace;font-weight:700;width:80px}'
+    +'.pos-pts{color:#34d399}.neg-pts{color:#f87171}'
+    +'.total-row{background:rgba(34,211,238,.08)}'
+    +'.total-row td{font-size:13px;color:#22d3ee;border:none;padding:10px 18px}'
+    +'.rules{margin-top:28px;padding:18px;background:#111827;border:1px solid #2d3a52;border-radius:12px;font-size:12px;color:#64748b;line-height:1.8}'
+    +'.rules b{color:#94a3b8}'
+    +'footer{margin-top:28px;font-size:11px;color:#334155;text-align:center}'
+    +'@media print{body{background:#fff;color:#1a1f2e;padding:16px}'
+    +'.turma{border-color:#e2e8f0}.turma-head{border-color:#e2e8f0}'
+    +'td{border-color:#e2e8f0}th{border-color:#e2e8f0;color:#4a5568}'
+    +'.total{color:#0891b2}.pos-pts{color:#059669}.neg-pts{color:#dc2626}'
+    +'.total-row{background:rgba(8,145,178,.06)}.total-row td{color:#0891b2}'
+    +'.rules{border-color:#e2e8f0;color:#4a5568}.rules b{color:#1a1f2e}'
+    +'h1{color:#0891b2}footer{color:#94a3b8}}'
+    +'</style></head><body>'
+    +'<h1>📊 Ranking Detalhado — '+S.ev.name+'</h1>'
+    +'<p class="sub">Gerado em '+new Date().toLocaleString('pt-BR')+' · '+(S.bay||'Todas as séries')+'</p>'
+    +rows
+    +'<div class="rules"><b>Regra de Pontuação:</b><br>'
+    +'1º: '+sc.p1+' · 2º: '+sc.p2+' · 3º: '+sc.p3+' · 4º: '+sc.p4
+    +' · 5º: '+(sc.p5||0)+' · 6º: '+(sc.p6||0)+' · 7º: '+(sc.p7||0)+' · 8º: '+(sc.p8||0)
+    +'<br>Vitória: +'+sc.pWin+' · W.O.: '+sc.pWO+'</div>'
+    +'<footer>'+S.ev.name+' · Rodolfo C. Pinheiro</footer>'
+    +'</body></html>';
+  var blob=new Blob([out],{type:'text/html;charset=utf-8'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='ranking_detalhado_'+new Date().toISOString().slice(0,10)+'.html';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);
 }
 function pDl(c){
   c.appendChild(h('div',{'class':'banner',style:{flexDirection:'column',alignItems:'flex-start',gap:'14px'}},h('div',{},h('h3',{},'📄 Modelo'),h('p',{},'Baixe e preencha para importar.')),h('button',{'class':'btn-d',onclick:dlTpl},'📄 Baixar Modelo')));
