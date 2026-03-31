@@ -1483,30 +1483,32 @@ function pR(c){
   else ls.forEach(function(r,i){
     if(S.rt==='class'){
       var detail=calcClassDetail(r.id);
+      var isExpanded=S._expandedRk===r.id;
       var row=h('div',{style:{borderBottom:'1px solid var(--bd)'}});
-      var mainRow=h('div',{'class':'rr',style:{cursor:'pointer',borderBottom:'none'},onclick:function(){
-        var dd=row.querySelector('.detail-expand');
-        if(dd)dd.style.display=dd.style.display==='none'?'block':'none';
-      }},
+      var mainRow=h('div',{'class':'rr',style:{cursor:'pointer',borderBottom:'none'},onclick:(function(rid){return function(){
+        S._expandedRk=S._expandedRk===rid?null:rid;R();
+      }})(r.id)},
         h('div',{'class':'rp '+(i<3?'r'+(i+1):'ro')},''+(i+1)),
         h('div',{style:{flex:'1'}},
           h('div',{'class':'rn'},r.nm+(r.yr?' · '+r.yr:'')),
           h('div',{style:{fontSize:'10px',color:'var(--tx3)',marginTop:'2px'}},detail.summary)
         ),
         h('div',{'class':'rv'},r.p+' pts'),
-        h('span',{style:{fontSize:'10px',color:'var(--tx3)',marginLeft:'6px'}},'▼')
+        h('span',{style:{fontSize:'10px',color:'var(--tx3)',marginLeft:'6px',transition:'transform .2s',transform:isExpanded?'rotate(180deg)':''}},'\u25BC')
       );
-      var detailDiv=h('div',{'class':'detail-expand',style:{display:'none',padding:'8px 16px 12px 48px',fontSize:'11px',color:'var(--tx2)',lineHeight:'1.8',background:'var(--bg3)',borderRadius:'0 0 var(--r) var(--r)'}});
-      detail.lines.forEach(function(line){
-        detailDiv.appendChild(h('div',{style:{display:'flex',justifyContent:'space-between',padding:'2px 0',borderBottom:'1px solid var(--bd)'}},
-          h('span',{html:line.desc}),
-          h('span',{style:{fontWeight:'700',color:line.pts>=0?'var(--gn)':'var(--rd)',fontFamily:"'Space Mono'",fontSize:'11px'}},(line.pts>=0?'+':'')+line.pts)
-        ));
-      });
-      if(!detail.lines.length)detailDiv.appendChild(h('div',{style:{color:'var(--tx3)',fontStyle:'italic'}},'Sem pontuação detalhada'));
-      detailDiv.appendChild(h('div',{style:{marginTop:'6px',fontWeight:'700',textAlign:'right',fontSize:'12px',color:'var(--pr)'}},'Total: '+r.p+' pts'));
       row.appendChild(mainRow);
-      row.appendChild(detailDiv);
+      if(isExpanded){
+        var detailDiv=h('div',{style:{padding:'8px 16px 12px 48px',fontSize:'11px',color:'var(--tx2)',lineHeight:'1.8',background:'var(--bg3)',borderRadius:'0 0 var(--r) var(--r)'}});
+        detail.lines.forEach(function(line){
+          detailDiv.appendChild(h('div',{style:{display:'flex',justifyContent:'space-between',padding:'2px 0',borderBottom:'1px solid var(--bd)'}},
+            h('span',{html:line.desc}),
+            h('span',{style:{fontWeight:'700',color:line.pts>=0?'var(--gn)':'var(--rd)',fontFamily:"'Space Mono'",fontSize:'11px'}},(line.pts>=0?'+':'')+line.pts)
+          ));
+        });
+        if(!detail.lines.length)detailDiv.appendChild(h('div',{style:{color:'var(--tx3)',fontStyle:'italic'}},'Sem pontuação detalhada'));
+        detailDiv.appendChild(h('div',{style:{marginTop:'6px',fontWeight:'700',textAlign:'right',fontSize:'12px',color:'var(--pr)'}},'Total: '+r.p+' pts'));
+        row.appendChild(detailDiv);
+      }
       body.appendChild(row);
     } else {
       body.appendChild(h('div',{'class':'rr'},h('div',{'class':'rp '+(i<3?'r'+(i+1):'ro')},''+(i+1)),h('div',{style:{flex:'1'}},h('div',{'class':'rn'},r.tn),h('div',{'class':'rs'},r.cn+' · '+r.sn+' · '+r.w+'V'+(r.wo?' · W.O.:'+r.wo:''))),h('div',{'class':'rv'},r.p+' pts')));
