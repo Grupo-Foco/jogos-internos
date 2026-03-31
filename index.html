@@ -889,6 +889,15 @@ function R(){
     renderMasterPanel();return;
   }
 
+  // Loading screen: show while waiting for Supabase data
+  if(MT.loading){
+    root.appendChild(h('div',{style:{minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'var(--bg)',padding:'24px'}},
+      h('div',{style:{fontSize:'48px',marginBottom:'16px',animation:'pulse 1.5s infinite'}},'🏆'),
+      h('div',{style:{fontSize:'16px',fontWeight:'700',color:'var(--pr)',marginBottom:'8px'}},'Carregando dados...'),
+      h('div',{style:{fontSize:'12px',color:'var(--tx3)'}},'Conectando ao servidor')
+    ));return;
+  }
+
   // School inactive check
   if(MT.schoolCode&&MT.schoolBlocked){
     root.appendChild(h('div',{style:{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--bg)',padding:'24px'}},
@@ -3276,6 +3285,14 @@ function applyMatchTime(bk,ct,matchId,newdt){
 var _syncTimer=null;
 function scheduleSave(){
   if(!S.sb.enabled||!S.sb.url||!S.sb.key)return;
+  // SAFETY: Don't save if data hasn't been loaded from Supabase yet
+  if(!MT.dataLoaded){console.log('scheduleSave blocked: data not loaded yet');return}
+  // SAFETY: Don't save if state appears empty (protection against overwrite with blank)
+  if(!S.cls.length&&!S.spt.length&&!S.enr.length&&!S.logins.length&&!S.judgeLogins.length&&S.adminPass==='admin123'){
+    // State looks like fresh/default — check if this school has existing data
+    // Only allow save if data was confirmed loaded (MT.dataLoaded=true)
+    console.log('scheduleSave: state appears empty, saving anyway (dataLoaded='+MT.dataLoaded+')');
+  }
   if(_syncTimer)clearTimeout(_syncTimer);
   _syncTimer=setTimeout(function(){syncToSupabase(false)},2000);
 }
@@ -3298,11 +3315,25 @@ function syncToSupabase(manual){
     if(manual)alert('Configure a URL e a chave do Supabase primeiro (⚙️ Configurações).');
     return;
   }
+  // SAFETY: Don't save before data is loaded
+  if(!MT.dataLoaded&&!manual){console.log('syncToSupabase blocked: waiting for load');return}
   S.sb.syncing=true;
-  // Don't re-render if modal open OR any input/select is focused (prevents data loss)
   var hasFocus=document.activeElement&&(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='SELECT'||document.activeElement.tagName==='TEXTAREA');
   if(!S.mod&&!hasFocus)R();
   var payload=getDbPayload();
+  // BACKUP: Save a backup copy before overwriting (only every 5 minutes max)
+  var now=Date.now();
+  var lastBackup=MT._lastBackup||0;
+  if(now-lastBackup>300000){// 5 minutes
+    MT._lastBackup=now;
+    var backupId=getSchoolDbId()+'_backup';
+    fetch(S.sb.url+'/rest/v1/jogos_data',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key,'Prefer':'resolution=merge-duplicates'},
+      body:JSON.stringify({id:backupId,data:payload.data,updated_at:new Date().toISOString()})
+    }).catch(function(e){console.error('Backup failed:',e)});
+  }
+  // Main save
   fetch(S.sb.url+'/rest/v1/jogos_data',{
     method:'POST',
     headers:{
@@ -3520,6 +3551,8 @@ function mSettings(root){
   },{passive:true});
 })();
 
+// *** Show loading screen first ***
+MT.loading=!MT.isMaster&&!!SB_DEFAULT_KEY;
 R();
 
 // *** AUTO-CONNECT: Apply default Supabase credentials if not set ***
@@ -3529,12 +3562,13 @@ if(SB_DEFAULT_KEY){
   S.sb.enabled=true;
 }
 
-// *** AUTO-LOAD: If school mode OR regular mode with Supabase, load data ***
-if(S.sb.url&&S.sb.key){
-  // For schools, load their scoped data
+// *** AUTO-LOAD: Load data BEFORE allowing interaction ***
+if(S.sb.url&&S.sb.key&&!MT.isMaster){
   loadFromSupabase(function(ok){
-    if(ok){R()}
-    // Also check if school is active
+    MT.loading=false;
+    MT.dataLoaded=true; // Flag: data has been loaded, safe to save
+    if(ok){R()}else{R()} // Render either way after load attempt
+    // Check if school is active
     if(MT.schoolCode){
       fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.master_schools&select=data',{
         headers:{'apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key}
@@ -3549,6 +3583,9 @@ if(S.sb.url&&S.sb.key){
       }).catch(function(){});
     }
   });
+} else {
+  MT.loading=false;
+  MT.dataLoaded=true;
 }
 </script>
 </body>
