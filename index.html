@@ -2469,7 +2469,8 @@ function findSpt(nm){var n=nm.trim().toUpperCase();return S.spt.find(function(s)
 function mEnr(c){
   var isEdit=S.mod.tp==='editEnr';
   var orig=isEdit?S.mod.enr:null;
-  var f={tn:orig?orig.tn:'',ci:orig?orig.ci:'',si:orig?orig.si:'',ct:orig?(orig.ct||'Masculino'):'Masculino',pl:orig?orig.pl:'',st:orig?orig.st:'pending'};
+  var lockedCi=(S.auth&&S.auth.role==='student')?S.auth.ci:null;
+  var f={tn:orig?orig.tn:'',ci:orig?orig.ci:(lockedCi||''),si:orig?orig.si:'',ct:orig?(orig.ct||'Masculino'):'Masculino',pl:orig?orig.pl:'',st:orig?orig.st:'pending'};
   var ov=h('div',{'class':'ov'});
   ov.onclick=function(e){if(e.target===ov){S.mod=null;R()}};
   var close=function(){S.mod=null;R()};
