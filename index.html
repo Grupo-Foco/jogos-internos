@@ -451,7 +451,7 @@ var XLSXMini = {
 }
 
 
-var S={role:'admin',page:'dashboard',sbo:false,ev:{name:'Jogos Internos 2026'},cls:[],spt:[],enr:[],brk:{},locs:[],mod:null,bs:'',bc:'',rt:'class',theme:'dark',ir:null,bay:'',say:'',auth:null,logins:[],judgeLogins:[],recursos:[],adminPass:'admin123',loginErr:'',thirdPlace:{},nextGameAlert:null,appInfo:{author:'Rodolfo C. Pinheiro',contact:'rodolfinhocp@gmail.com',version:'4.0'},sb:{url:'https://omevoikikvkjshormjoh.supabase.co',key:'',enabled:true,status:'',syncing:false},
+var S={role:'admin',page:'dashboard',sbo:false,ev:{name:'Jogos Internos 2026'},cls:[],spt:[],enr:[],brk:{},locs:[],mod:null,bs:'',bc:'',rt:'class',theme:'dark',ir:null,bay:'',say:'',auth:null,logins:[],judgeLogins:[],adminLogins:[],auditLog:[],recursos:[],adminPass:'admin123',loginErr:'',thirdPlace:{},nextGameAlert:null,appInfo:{author:'Rodolfo C. Pinheiro',contact:'rodolfinhocp@gmail.com',version:'4.0'},sb:{url:'https://omevoikikvkjshormjoh.supabase.co',key:'',enabled:true,status:'',syncing:false},
 // v4.0: Scoring, WO, Individual sports
 scoring:{p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1,pWin:3,pWO:-2}, // points per position + per win + WO penalty
 podiums:[], // [{id,sportId,category,year,p1classId,p2classId,p3classId,notes}]
@@ -748,6 +748,23 @@ function mAddSchool(root){
 }
 
 function uid(){return Math.random().toString(36).slice(2,9)}
+
+// Audit log helper - records who did what and when
+function logAudit(action,details){
+  if(!S.auditLog)S.auditLog=[];
+  var who=S.auth?(S.auth.name||S.auth.login||S.auth.role):'Sistema';
+  var role=S.auth?S.auth.role:'?';
+  S.auditLog.unshift({
+    id:uid(),
+    timestamp:new Date().toISOString(),
+    user:who,
+    role:role,
+    action:action,
+    details:details||''
+  });
+  // Keep only last 500 entries to avoid bloat
+  if(S.auditLog.length>500)S.auditLog=S.auditLog.slice(0,500);
+}
 function getAnos(){var a=[];S.cls.forEach(function(c){var y=c.yr||'';if(y&&a.indexOf(y)<0)a.push(y)});a.sort();return a}
 function getClsByAno(ano){return S.cls.filter(function(c){return c.yr===ano})}
 function getEnrByAno(ano,ap){var cids=getClsByAno(ano).map(function(c){return c.id});return ap.filter(function(e){return cids.indexOf(e.ci)>=0})}
@@ -911,7 +928,7 @@ function R(){
 
   if(!S.auth){renderLogin(root);return;}
 
-  var aN=[{id:'dashboard',l:'Dashboard',e:'🏠',s:'Geral'},{id:'classes',l:'Turmas',e:'🏫',s:'Cadastros'},{id:'sports',l:'Esportes',e:'⚽',s:'Cadastros'},{id:'venues',l:'Locais',e:'📍',s:'Cadastros'},{id:'enrollments',l:'Inscrições',e:'📋',s:'Competição'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Competição'},{id:'schedule',l:'Agenda',e:'📅',s:'Competição'},{id:'conflicts',l:'Conflitos',e:'⚠️',s:'Competição'},{id:'individual',l:'Individuais',e:'🏅',s:'Competição'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'scoring_page',l:'Pontuação',e:'🎯',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'},{id:'logins',l:'Logins',e:'🔑',s:'Acesso'}];
+  var aN=[{id:'dashboard',l:'Dashboard',e:'🏠',s:'Geral'},{id:'classes',l:'Turmas',e:'🏫',s:'Cadastros'},{id:'sports',l:'Esportes',e:'⚽',s:'Cadastros'},{id:'venues',l:'Locais',e:'📍',s:'Cadastros'},{id:'enrollments',l:'Inscrições',e:'📋',s:'Competição'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Competição'},{id:'schedule',l:'Agenda',e:'📅',s:'Competição'},{id:'conflicts',l:'Conflitos',e:'⚠️',s:'Competição'},{id:'individual',l:'Individuais',e:'🏅',s:'Competição'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'scoring_page',l:'Pontuação',e:'🎯',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'},{id:'logins',l:'Logins',e:'🔑',s:'Acesso'},{id:'audit',l:'Auditoria',e:'📋',s:'Acesso'}];
   var sN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'enroll',l:'Inscrever',e:'📋',s:'Ações'},{id:'brackets',l:'Jogos',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'}];
   var jN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'recursos',l:'Recursos',e:'📝',s:'Ações'}];
   var nav=S.role==='admin'?aN:S.role==='judge'?jN:sN;
@@ -984,7 +1001,7 @@ function R(){
   );
 
   var content=h('div',{'class':'content'});
-  var pages={dashboard:pD,classes:pC,sports:pS,venues:pVenues,settings_page:function(c){S.page='dashboard';R();return;},enrollments:pEA,enroll:pES,brackets:pB,schedule:pSc,ranking:pR,conflicts:pConflicts,downloads:pDl,'import':pI,logins:pLogins,recursos:pRecursos,scoring_page:pScoring,individual:pIndividual};
+  var pages={dashboard:pD,classes:pC,sports:pS,venues:pVenues,settings_page:function(c){S.page='dashboard';R();return;},enrollments:pEA,enroll:pES,brackets:pB,schedule:pSc,ranking:pR,conflicts:pConflicts,downloads:pDl,'import':pI,logins:pLogins,recursos:pRecursos,scoring_page:pScoring,individual:pIndividual,audit:pAudit};
   (pages[S.page]||pD)(content);
 
   var mainDiv=h('div',{'class':'main'},topbar,content);
@@ -1109,7 +1126,7 @@ function pC(c){
         h('td',{'data-label':'Turma',style:{fontWeight:'600'}},x.nm),
         h('td',{'data-label':'Ano'},x.yr||'—'),
         h('td',{'data-label':'Período'},h('span',{'class':'badge bc'},x.pr)),
-        h('td',{},h('button',{'class':'btn btn-s btn-r',onclick:(function(id){return function(){S.cls=S.cls.filter(function(y){return y.id!==id});R()}})(x.id)},'✕'))
+        h('td',{},h('button',{'class':'btn btn-s btn-r',onclick:(function(id,nm){return function(){S.cls=S.cls.filter(function(y){return y.id!==id});logAudit('Remoção de turma','Turma "'+nm+'" removida');R()}})(x.id,x.nm)},'✕'))
       );
     });
 
@@ -1125,7 +1142,7 @@ function pC(c){
       h('div',{'class':'fg'},h('label',{'class':'fl'},'Ano'),h('input',{'class':'fi',oninput:function(e){f.yr=e.target.value}})),
       h('div',{'class':'fg'},h('label',{'class':'fl'},'Período'),h('select',{'class':'fs',onchange:function(e){f.pr=e.target.value}},h('option',{},'Manhã'),h('option',{},'Tarde'),h('option',{},'Integral')))
     ));
-    return function(){if(!f.nm.trim())return;S.cls.push({id:uid(),nm:f.nm,yr:f.yr,pr:f.pr});close()};
+    return function(){if(!f.nm.trim())return;S.cls.push({id:uid(),nm:f.nm,yr:f.yr,pr:f.pr});logAudit('Criação de turma','Turma "'+f.nm+'" criada');close()};
   });
 }
 
@@ -1145,7 +1162,7 @@ function pS(c){
         h('div',{'class':'card-t'},s.nm),
         h('div',{style:{display:'flex',gap:'3px'}},
           h('button',{'class':'btn btn-s',onclick:(function(sp){return function(){S.mod={tp:'editSport',sport:sp};R()}})(s)},'✏️'),
-          h('button',{'class':'btn btn-s btn-r',onclick:(function(id){return function(){S.spt=S.spt.filter(function(x){return x.id!==id});R()}})(s.id)},'✕')
+          h('button',{'class':'btn btn-s btn-r',onclick:(function(id,nm){return function(){S.spt=S.spt.filter(function(x){return x.id!==id});logAudit('Remoção de esporte','Esporte "'+nm+'" removido');R()}})(s.id,s.nm)},'✕')
         )
       ),
       h('div',{'class':'card-b'},
@@ -1190,7 +1207,7 @@ function pS(c){
     }
     renderTB();
     body.appendChild(h('div',{'class':'fg'},h('label',{'class':'fl'},'Critérios de Desempate (arraste para ordenar)'),tbDiv));
-    return function(){if(!f.nm.trim())return;S.spt.push({id:uid(),nm:f.nm,mn:f.mn,mx:f.mx,ct:f.ct.slice(),dur:f.dur||14,tiebreakers:f.tiebreakers.slice()});close()};
+    return function(){if(!f.nm.trim())return;S.spt.push({id:uid(),nm:f.nm,mn:f.mn,mx:f.mx,ct:f.ct.slice(),dur:f.dur||14,tiebreakers:f.tiebreakers.slice()});logAudit('Criação de esporte','Esporte "'+f.nm+'" criado');close()};
   });
   // Edit sport modal
   if(S.mod&&S.mod.tp==='editSport'){
@@ -1250,7 +1267,7 @@ function pEA(c){
       var cc={'Masculino':'bc','Feminino':'bp','Misto':'ba'};
       var acts=h('div',{style:{display:'flex',gap:'3px'}});
       acts.appendChild(h('button',{'class':'btn btn-s',title:'Editar',onclick:(function(en){return function(){S.mod={tp:'editEnr',enr:en};R()}})(e)},'✏️'));
-      if(e.st==='pending'){acts.appendChild(h('button',{'class':'btn btn-s btn-g',onclick:(function(en){return function(){en.st='approved';R()}})(e)},'✓'));acts.appendChild(h('button',{'class':'btn btn-s btn-r',onclick:(function(en){return function(){en.st='rejected';R()}})(e)},'✕'));}
+      if(e.st==='pending'){acts.appendChild(h('button',{'class':'btn btn-s btn-g',onclick:(function(en){return function(){en.st='approved';logAudit('Aprovação de inscrição','Equipe "'+en.tn+'" aprovada');R()}})(e)},'✓'));acts.appendChild(h('button',{'class':'btn btn-s btn-r',onclick:(function(en){return function(){en.st='rejected';logAudit('Rejeição de inscrição','Equipe "'+en.tn+'" rejeitada');R()}})(e)},'✕'));}
       else{acts.appendChild(h('button',{'class':'btn btn-s',style:{color:'var(--tx3)'},onclick:(function(en){return function(){en.st='pending';R()}})(e)},sl[e.st]));}
       acts.appendChild(h('button',{'class':'btn btn-s btn-r',title:'Remover',onclick:(function(en){return function(){if(confirm('Remover equipe "'+en.tn+'"?')){S.enr=S.enr.filter(function(x){return x.id!==en.id});R();}}})(e)},'🗑'));
       return h('tr',{},
@@ -2034,6 +2051,11 @@ function mRes(c){
           if(x.t2==='W_'+m.id)return Object.assign({},x,{t2:winner});
           return x;
         })})});
+        var cardsTxt='';
+        if(cardState.t1y||cardState.t1r||cardState.t2y||cardState.t2r){
+          cardsTxt=' (cartões: '+tName(m.t1)+' 🟨'+cardState.t1y+' 🟥'+cardState.t1r+', '+tName(m.t2)+' 🟨'+cardState.t2y+' 🟥'+cardState.t2r+')';
+        }
+        logAudit('Lançamento de resultado',tName(m.t1)+' '+v1+' x '+v2+' '+tName(m.t2)+cardsTxt);
         // notify next-game alert for student
         notifyNextGame(S.mod.si,S.mod.ct,m.id);
         S.mod=null;R();
@@ -2313,6 +2335,7 @@ function applyWO(m,absentTeam,winnerTeam){
   })})});
   if(!S.woLog)S.woLog=[];
   S.woLog.push({matchId:m.id,teamId:absentTeam,winnerId:winnerTeam,date:new Date().toLocaleString('pt-BR')});
+  logAudit('W.O.','Time "'+tName(absentTeam)+'" não compareceu. Vencedor: "'+tName(winnerTeam)+'"');
   notifyNextGame(S.mod.si,S.mod.ct,m.id);
   S.mod=null;R();
 }
@@ -2327,6 +2350,7 @@ function applyWOBoth(m){
   if(!S.woLog)S.woLog=[];
   S.woLog.push({matchId:m.id,teamId:m.t1,winnerId:null,type:'both',date:new Date().toLocaleString('pt-BR')});
   S.woLog.push({matchId:m.id,teamId:m.t2,winnerId:null,type:'both',date:new Date().toLocaleString('pt-BR')});
+  logAudit('W.O. Duplo','Ambos os times "'+tName(m.t1)+'" e "'+tName(m.t2)+'" não compareceram');
   S.mod=null;R();
 }
 
@@ -2756,9 +2780,19 @@ function renderLogin(root){
     var lg=loginInput.value.trim();
     var pw=senhaInput.value.trim();
     if(!lg||!pw){S.loginErr='Preencha login e senha.';R();return}
-    // Admin check
+    // Admin check (default 'admin' user)
     if(lg.toLowerCase()==='admin'&&pw===S.adminPass){
-      S.auth={role:'admin'};S.role='admin';S.page='dashboard';S.loginErr='';R();return;
+      S.auth={role:'admin',name:'Administrador',login:'admin'};S.role='admin';S.page='dashboard';S.loginErr='';
+      logAudit('Login','Login do administrador principal');R();return;
+    }
+    // Additional admins check
+    var foundA=(S.adminLogins||[]).find(function(l){
+      return l.login.toLowerCase()===lg.toLowerCase()&&l.senha===pw;
+    });
+    if(foundA){
+      S.auth={role:'admin',name:foundA.name,login:foundA.login};
+      S.role='admin';S.page='dashboard';S.loginErr='';
+      logAudit('Login','Admin '+foundA.name+' fez login');R();return;
     }
     // Student check
     var found=S.logins.find(function(l){
@@ -2840,6 +2874,38 @@ function pLogins(c){
   pwSection.appendChild(pwBody);
   c.appendChild(pwSection);
 
+  // ── Additional admin logins ─────────────────────────────────────────────
+  var aSection=h('div',{'class':'card',style:{marginBottom:'20px'}});
+  aSection.appendChild(h('div',{'class':'card-h'},
+    h('div',{'class':'card-t'},'👑 Logins de Administradores'),
+    h('button',{'class':'btn btn-p',onclick:function(){S.mod={tp:'addAdmin'};R()}},'+ Novo Admin')
+  ));
+  var aRows=!(S.adminLogins||[]).length
+    ?[h('tr',{},h('td',{colspan:'4'},h('div',{'class':'em'},'Apenas o admin principal está cadastrado. Adicione mais administradores para que outras pessoas possam acessar.')))]
+    :S.adminLogins.map(function(a){
+      return h('tr',{},
+        h('td',{'data-label':'Nome',style:{fontWeight:'600'}},a.name),
+        h('td',{'data-label':'Login',style:{fontFamily:'monospace',color:'var(--pr)'}},a.login),
+        h('td',{'data-label':'Senha',style:{fontFamily:'monospace'}},a.senha),
+        h('td',{},h('button',{'class':'btn btn-s btn-r',onclick:(function(aid,aname){return function(){
+          if(confirm('Remover admin "'+aname+'"?')){
+            S.adminLogins=S.adminLogins.filter(function(x){return x.id!==aid});
+            logAudit('Remoção de admin','Admin "'+aname+'" foi removido');R();
+          }
+        }})(a.id,a.name)},'🗑'))
+      );
+    });
+  aSection.appendChild(h('div',{'class':'card-b'},
+    h('div',{style:{marginBottom:'12px',fontSize:'12px',color:'var(--tx2)'}},
+      (S.adminLogins||[]).length+' administrador(es) adicional(is). Eles têm o mesmo acesso que o admin principal.'
+    ),
+    h('div',{'class':'tw'},h('table',{'class':'mob-cards'},
+      h('thead',{},h('tr',{},h('th',{},'Nome'),h('th',{},'Login'),h('th',{},'Senha'),h('th',{}))),
+      h('tbody',{},aRows)
+    ))
+  ));
+  c.appendChild(aSection);
+
   // ── Generate student logins ─────────────────────────────────────────────
   var genSection=h('div',{'class':'card',style:{marginBottom:'20px'}});
   genSection.appendChild(h('div',{'class':'card-h'},
@@ -2917,6 +2983,7 @@ function pLogins(c){
   // Modal
   if(S.mod&&S.mod.tp==='addLogin')mAddLogin(c);
   if(S.mod&&S.mod.tp==='addJudge')mAddJudge(c);
+  if(S.mod&&S.mod.tp==='addAdmin')mAddAdmin(c);
 }
 
 
@@ -3034,11 +3101,101 @@ function mAddJudge(c){
         if(S.judgeLogins.find(function(l){return l.login.toLowerCase()===f.login.toLowerCase()})){
           errDiv.style.display='block';errDiv.textContent='Login já existe.';return}
         S.judgeLogins.push({id:uid(),name:f.name,login:f.login,senha:f.senha});
+        logAudit('Criação de juiz','Juiz "'+f.name+'" criado');
         S.mod=null;R();
       }},'Criar')
     )
   ));
   c.appendChild(ov);
+}
+
+function mAddAdmin(c){
+  var f={name:'',login:'',senha:''};
+  var ov=h('div',{'class':'ov'});ov.onclick=function(e){if(e.target===ov){S.mod=null;R()}};
+  var close=function(){S.mod=null;R()};
+  var errDiv=h('div',{style:{display:'none',color:'#f87171',fontSize:'12px',marginBottom:'8px'}});
+  var nameInp=h('input',{'class':'fi',placeholder:'Ex: Maria Silva',oninput:function(e){f.name=e.target.value}});
+  var loginInp=h('input',{'class':'fi',placeholder:'Ex: maria',oninput:function(e){f.login=e.target.value}});
+  var senhaInp=h('input',{'class':'fi',type:'text',placeholder:'Senha',oninput:function(e){f.senha=e.target.value}});
+  ov.appendChild(h('div',{'class':'md'},
+    h('div',{'class':'md-h'},h('div',{'class':'md-t'},'👑 Novo Administrador'),h('button',{'class':'btn btn-s',onclick:close},'✕')),
+    h('div',{'class':'md-b'},
+      errDiv,
+      h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginBottom:'10px',lineHeight:'1.6'}},'Este admin terá acesso completo ao sistema, igual ao admin principal. Todas as ações serão registradas no log de auditoria.'),
+      h('div',{'class':'fg'},h('label',{'class':'fl'},'Nome completo'),nameInp),
+      h('div',{'class':'fg'},h('label',{'class':'fl'},'Login'),loginInp),
+      h('div',{'class':'fg'},h('label',{'class':'fl'},'Senha'),senhaInp)
+    ),
+    h('div',{'class':'md-f'},
+      h('button',{'class':'btn',onclick:close},'Cancelar'),
+      h('button',{'class':'btn btn-p',onclick:function(){
+        f.name=(f.name||nameInp.value).trim();
+        f.login=(f.login||loginInp.value).trim();
+        f.senha=(f.senha||senhaInp.value).trim();
+        if(!f.name){errDiv.style.display='block';errDiv.textContent='Digite o nome.';return}
+        if(!f.login){errDiv.style.display='block';errDiv.textContent='Digite o login.';return}
+        if(!f.senha){errDiv.style.display='block';errDiv.textContent='Digite a senha.';return}
+        if(f.login.toLowerCase()==='admin'){errDiv.style.display='block';errDiv.textContent='Login "admin" é reservado.';return}
+        if(!S.adminLogins)S.adminLogins=[];
+        if(S.adminLogins.find(function(l){return l.login.toLowerCase()===f.login.toLowerCase()})){
+          errDiv.style.display='block';errDiv.textContent='Login já existe.';return}
+        S.adminLogins.push({id:uid(),name:f.name,login:f.login,senha:f.senha});
+        logAudit('Criação de admin','Administrador "'+f.name+'" criado com login "'+f.login+'"');
+        S.mod=null;R();
+      }},'Criar')
+    )
+  ));
+  c.appendChild(ov);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AUDIT LOG PAGE
+// ══════════════════════════════════════════════════════════════════════════════
+function pAudit(c){
+  if(!S.auditLog)S.auditLog=[];
+  var roleColors={admin:'#22d3ee',judge:'#a78bfa',student:'#34d399',Sistema:'#64748b'};
+  var roleLabels={admin:'ADMIN',judge:'JUIZ',student:'ALUNO'};
+  c.appendChild(h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px',flexWrap:'wrap',gap:'8px'}},
+    h('div',{style:{fontSize:'13px',color:'var(--tx2)'}},S.auditLog.length+' registro(s) de auditoria'),
+    h('div',{style:{display:'flex',gap:'6px'}},
+      h('button',{'class':'btn btn-s',onclick:function(){
+        var rows='Data/Hora,Usuário,Perfil,Ação,Detalhes\n';
+        S.auditLog.forEach(function(a){
+          var d=new Date(a.timestamp).toLocaleString('pt-BR');
+          rows+='"'+d+'","'+a.user+'","'+(roleLabels[a.role]||a.role)+'","'+a.action+'","'+(a.details||'').replace(/"/g,'""')+'"\n';
+        });
+        var blob=new Blob(['\ufeff'+rows],{type:'text/csv;charset=utf-8'});
+        var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+        a.download='auditoria_'+new Date().toISOString().slice(0,10)+'.csv';
+        document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);
+      }},'📊 Exportar CSV'),
+      h('button',{'class':'btn btn-s btn-r',onclick:function(){
+        if(confirm('Limpar TODO o histórico de auditoria? Esta ação é irreversível.')){
+          S.auditLog=[];logAudit('Limpeza de auditoria','Histórico zerado');R();
+        }
+      }},'🗑 Limpar')
+    )
+  ));
+  if(!S.auditLog.length){
+    c.appendChild(h('div',{'class':'card'},h('div',{'class':'card-b'},h('div',{'class':'em'},'Nenhum registro de auditoria ainda.'))));
+    return;
+  }
+  var rows=S.auditLog.map(function(a){
+    var d=new Date(a.timestamp);
+    var dStr=d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    var rc=roleColors[a.role]||'#64748b';
+    return h('tr',{},
+      h('td',{'data-label':'Data',style:{fontFamily:'monospace',fontSize:'11px',color:'var(--tx3)',whiteSpace:'nowrap'}},dStr),
+      h('td',{'data-label':'Usuário',style:{fontWeight:'600'}},a.user),
+      h('td',{'data-label':'Perfil'},h('span',{style:{display:'inline-block',padding:'2px 8px',borderRadius:'12px',background:rc+'22',color:rc,fontSize:'10px',fontWeight:'700',letterSpacing:'.5px'}},roleLabels[a.role]||a.role.toUpperCase())),
+      h('td',{'data-label':'Ação',style:{fontWeight:'600',color:'var(--pr)',fontSize:'12px'}},a.action),
+      h('td',{'data-label':'Detalhes',style:{fontSize:'11px',color:'var(--tx2)'}},a.details||'—')
+    );
+  });
+  c.appendChild(h('div',{'class':'card'},h('div',{'class':'tw'},h('table',{'class':'mob-cards'},
+    h('thead',{},h('tr',{},h('th',{},'Data/Hora'),h('th',{},'Usuário'),h('th',{},'Perfil'),h('th',{},'Ação'),h('th',{},'Detalhes'))),
+    h('tbody',{},rows)
+  ))));
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -3110,12 +3267,20 @@ function pRecursos(c){
           h('button',{'class':'btn btn-g btn-s',onclick:(function(rid,respInp,pCls,pPts){return function(){
             var r2=S.recursos.find(function(x){return x.id===rid});
             if(r2){r2.status='approved';r2.adminResp=respInp.value.trim();r2.resolvedAt=new Date().toLocaleString('pt-BR');
-              if(pCls.value){r2.punishClassId=pCls.value;r2.punishPts=parseInt(pPts.value)||0}}R();
+              var pTxt='';
+              if(pCls.value){r2.punishClassId=pCls.value;r2.punishPts=parseInt(pPts.value)||0;
+                var cn=S.cls.find(function(c){return c.id===pCls.value});
+                pTxt=' · Punição: '+(cn?cn.nm:'?')+' '+(parseInt(pPts.value)||0)+' pts';
+              }
+              logAudit('Deferimento de recurso','Recurso de "'+(r2.author||'?')+'" deferido'+pTxt);
+            }R();
           }})(rec.id,adminResp,punishCls,punishPts)},'✅ Deferir'),
           h('button',{'class':'btn btn-r btn-s',onclick:(function(rid,respInp,pCls,pPts){return function(){
             var r2=S.recursos.find(function(x){return x.id===rid});
             if(r2){r2.status='rejected';r2.adminResp=respInp.value.trim();r2.resolvedAt=new Date().toLocaleString('pt-BR');
-              if(pCls.value){r2.punishClassId=pCls.value;r2.punishPts=parseInt(pPts.value)||0}}R();
+              if(pCls.value){r2.punishClassId=pCls.value;r2.punishPts=parseInt(pPts.value)||0}
+              logAudit('Indeferimento de recurso','Recurso de "'+(r2.author||'?')+'" indeferido');
+            }R();
           }})(rec.id,adminResp,punishCls,punishPts)},'❌ Indeferir')
         ));
       }
@@ -3124,7 +3289,9 @@ function pRecursos(c){
         body.appendChild(h('div',{style:{marginTop:'6px',display:'flex',justifyContent:'flex-end'}},
           h('button',{'class':'btn btn-s',onclick:(function(rid){return function(){
             var r2=S.recursos.find(function(x){return x.id===rid});
-            if(r2){r2.status='pending';r2.adminResp='';r2.resolvedAt='';r2.punishClassId='';r2.punishPts=0}R();
+            if(r2){r2.status='pending';r2.adminResp='';r2.resolvedAt='';r2.punishClassId='';r2.punishPts=0;
+              logAudit('Reabertura de recurso','Recurso de "'+(r2.author||'?')+'" reaberto');
+            }R();
           }})(rec.id)},'✏️ Editar / Reabrir')
         ));
       }
@@ -3690,7 +3857,8 @@ function getDbPayload(){
     id:getSchoolDbId(),
     data:JSON.stringify({
       cls:S.cls,spt:S.spt,enr:S.enr,brk:S.brk,locs:S.locs,
-      ev:S.ev,logins:S.logins,judgeLogins:S.judgeLogins,recursos:S.recursos,adminPass:S.adminPass,
+      ev:S.ev,logins:S.logins,judgeLogins:S.judgeLogins,adminLogins:S.adminLogins||[],auditLog:S.auditLog||[],
+      recursos:S.recursos,adminPass:S.adminPass,
       thirdPlace:S.thirdPlace,appInfo:S.appInfo,
       scoring:S.scoring,podiums:S.podiums,woLog:S.woLog
     }),
@@ -3762,7 +3930,7 @@ function loadFromSupabase(onDone){
     S.sb.syncing=false;
     if(rows&&rows.length&&rows[0].data){
       var d=JSON.parse(rows[0].data);
-      ['cls','spt','enr','brk','locs','ev','logins','judgeLogins','recursos','adminPass','thirdPlace','appInfo','scoring','podiums','woLog'].forEach(function(k){
+      ['cls','spt','enr','brk','locs','ev','logins','judgeLogins','adminLogins','auditLog','recursos','adminPass','thirdPlace','appInfo','scoring','podiums','woLog'].forEach(function(k){
         if(d[k]!==undefined)S[k]=d[k];
       });
       // If school has a specific admin pass from master, use it
