@@ -878,10 +878,12 @@ function h(tag,attrs){
   if(attrs){
     Object.keys(attrs).forEach(function(k){
       var v=attrs[k];
+      if(v===false||v===null||v===undefined)return; // skip falsy boolean attributes like disabled:false
       if(k==='class')e.className=v;
       else if(k==='html')e.innerHTML=v;
       else if(k==='style'&&typeof v==='object')Object.assign(e.style,v);
       else if(k.indexOf('on')===0&&typeof v==='function')e[k]=v;
+      else if(v===true)e.setAttribute(k,''); // boolean true → attribute without value
       else e.setAttribute(k,v);
     });
   }
@@ -2494,6 +2496,30 @@ function mEnr(c){
   var isEdit=S.mod.tp==='editEnr';
   var orig=isEdit?S.mod.enr:null;
   var lockedCi=(S.auth&&S.auth.role==='student')?S.auth.ci:null;
+  // Check prerequisites
+  if(!isEdit&&(!S.cls.length||!S.spt.length)){
+    var ov0=h('div',{'class':'ov'});ov0.onclick=function(e){if(e.target===ov0){S.mod=null;R()}};
+    var missing=[];
+    if(!S.cls.length)missing.push('Turmas');
+    if(!S.spt.length)missing.push('Esportes');
+    ov0.appendChild(h('div',{'class':'md'},
+      h('div',{'class':'md-h'},h('div',{'class':'md-t'},'⚠️ Cadastros necessários'),h('button',{'class':'btn btn-s',onclick:function(){S.mod=null;R()}},'✕')),
+      h('div',{'class':'md-b',style:{padding:'20px'}},
+        h('div',{style:{fontSize:'14px',lineHeight:'1.7',color:'var(--tx2)',marginBottom:'14px'}},'Antes de criar equipes, cadastre primeiro:'),
+        h('ul',{style:{marginLeft:'20px',color:'var(--pr)',fontWeight:'600'}},missing.map(function(m){return h('li',{style:{padding:'4px 0'}},m)})),
+        h('div',{style:{fontSize:'12px',color:'var(--tx3)',marginTop:'12px'}},'Use o menu lateral para acessar as páginas de cadastro.')
+      ),
+      h('div',{'class':'md-f'},
+        h('button',{'class':'btn btn-p',onclick:function(){
+          S.mod=null;
+          S.page=!S.cls.length?'classes':'sports';
+          R();
+        }},'Ir para '+missing[0])
+      )
+    ));
+    c.appendChild(ov0);
+    return;
+  }
   var f={tn:orig?orig.tn:'',ci:orig?orig.ci:(lockedCi||''),si:orig?orig.si:'',ct:orig?(orig.ct||'Masculino'):'Masculino',pl:orig?orig.pl:'',st:orig?orig.st:'pending'};
   var ov=h('div',{'class':'ov'});
   ov.onclick=function(e){if(e.target===ov){S.mod=null;R()}};
@@ -2537,6 +2563,17 @@ function mEnr(c){
       });
       cs.appendChild(grp);
     });
+    // Also add classes without year
+    var semAno=S.cls.filter(function(c){return !c.yr});
+    if(semAno.length){
+      var grp2=document.createElement('optgroup');grp2.label='Sem ano/série';
+      semAno.forEach(function(x){
+        var opt=document.createElement('option');opt.value=x.id;opt.textContent=x.nm;
+        if(f.ci===x.id)opt.selected=true;
+        grp2.appendChild(opt);
+      });
+      cs.appendChild(grp2);
+    }
   } else {
     S.cls.forEach(function(x){
       var opt=document.createElement('option');opt.value=x.id;opt.textContent=x.nm;
