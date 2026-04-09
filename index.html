@@ -2551,36 +2551,21 @@ function mEnr(c){
     ss.appendChild(opt);
   });
 
-  var cs=h('select',{'class':'fs',disabled:!!lockedCi,style:{opacity:lockedCi?'.6':'1'},onchange:function(e){if(!lockedCi)f.ci=e.target.value}},!lockedCi?h('option',{value:''},'Selecione...'):null);
-  var anos=getAnos();
-  if(anos.length>0){
-    anos.forEach(function(a){
-      var grp=document.createElement('optgroup');grp.label=a;
-      getClsByAno(a).forEach(function(x){
-        var opt=document.createElement('option');opt.value=x.id;opt.textContent=x.nm;
-        if(f.ci===x.id)opt.selected=true;
-        grp.appendChild(opt);
-      });
-      cs.appendChild(grp);
-    });
-    // Also add classes without year
-    var semAno=S.cls.filter(function(c){return !c.yr});
-    if(semAno.length){
-      var grp2=document.createElement('optgroup');grp2.label='Sem ano/série';
-      semAno.forEach(function(x){
-        var opt=document.createElement('option');opt.value=x.id;opt.textContent=x.nm;
-        if(f.ci===x.id)opt.selected=true;
-        grp2.appendChild(opt);
-      });
-      cs.appendChild(grp2);
-    }
-  } else {
-    S.cls.forEach(function(x){
-      var opt=document.createElement('option');opt.value=x.id;opt.textContent=x.nm;
-      if(f.ci===x.id)opt.selected=true;
-      cs.appendChild(opt);
-    });
-  }
+  var cs=h('select',{'class':'fs',disabled:!!lockedCi,style:{opacity:lockedCi?'.6':'1'},onchange:function(e){if(!lockedCi)f.ci=e.target.value}},!lockedCi?h('option',{value:''},'Selecione... ('+S.cls.length+' turmas)'):null);
+  // Sort classes by year then name, show all flat
+  var sortedCls=S.cls.slice().sort(function(a,b){
+    var ya=a.yr||'zzz',yb=b.yr||'zzz';
+    if(ya!==yb)return ya<yb?-1:1;
+    return(a.nm||'')<(b.nm||'')?-1:1;
+  });
+  console.log('mEnr: S.cls has',S.cls.length,'classes:',S.cls.map(function(c){return c.nm}).join(', '));
+  sortedCls.forEach(function(x){
+    var opt=document.createElement('option');
+    opt.value=x.id;
+    opt.textContent=x.nm+(x.yr?' ('+x.yr+')':'');
+    if(f.ci===x.id)opt.selected=true;
+    cs.appendChild(opt);
+  });
 
   var stSel=h('select',{'class':'fs',onchange:function(e){f.st=e.target.value}});
   [{v:'pending',l:'Pendente'},{v:'approved',l:'Aprovada'},{v:'rejected',l:'Rejeitada'}].forEach(function(o){
