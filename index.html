@@ -1967,26 +1967,10 @@ function impDocx(file){
 
 // Parse DOCX tables from raw XML (no mammoth dependency)
 function parseDocxTables(arrayBuffer,turmaName,turmaYear){
-  // DOCX is a ZIP file - extract word/document.xml
-  var zip=new Blob([arrayBuffer]);
-  var ds=new DecompressionStream('raw');
-  // Use JSZip-like approach with browser APIs
   try{
     var bytes=new Uint8Array(arrayBuffer);
-    // Find PK signature
     if(bytes[0]!==0x50||bytes[1]!==0x4B){alert('Não é um arquivo DOCX válido.');return}
-    // Use the browser's built-in ZIP reading (simple approach: find document.xml)
-    var blob=new Blob([arrayBuffer]);
-    // Try extracting with Response + DecompressionStream isn't available for ZIP
-    // Fallback: use DOMParser on the raw content
-    var textDecoder=new TextDecoder();
-    var content=textDecoder.decode(bytes);
-    // Find all table cells in the raw XML
-    var xmlStart=content.indexOf('<?xml');
-    // This approach won't work well - let's use a simpler approach
-    // Parse the DOCX by reading it as a text file and finding patterns
-    
-    // Better approach: load mammoth from CDN dynamically
+    // Load mammoth from CDN dynamically
     var script=document.createElement('script');
     script.src='https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
     script.onload=function(){
@@ -1997,7 +1981,7 @@ function parseDocxTables(arrayBuffer,turmaName,turmaYear){
       });
     };
     script.onerror=function(){
-      alert('Não foi possível carregar a biblioteca. Verifique a conexão com a internet.');
+      alert('Não foi possível carregar a biblioteca mammoth. Verifique a conexão com a internet.');
     };
     document.head.appendChild(script);
   }catch(err){
