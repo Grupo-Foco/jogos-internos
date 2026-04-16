@@ -2086,11 +2086,22 @@ function parseDocxHtml(html,turmaName,turmaYear){
       sport.ct.push('Misto');
     }
     
-    // Create team name
-    var abbr=turma.nm.replace(/\s*Ano\s*/i,' ').replace(/[aeiou\s]/gi,'').slice(0,3).toUpperCase();
-    if(abbr.length<2)abbr=turma.nm.slice(0,3).toUpperCase();
+    // Create team name: "7º Ano A" → "7º A", then add category letter
+    // Extract the series number and class letter from turma name
+    var nm=turma.nm;
+    var numMatch=nm.match(/(\d+)/);
+    var letterMatch=nm.match(/[A-Za-z]\s*$/); // last letter = class identifier
+    var seriesNum=numMatch?numMatch[1]:'';
+    var classLetter=letterMatch?letterMatch[0].trim().toUpperCase():'';
     var catAbbr=sportInfo.category==='Masculino'?'M':sportInfo.category==='Feminino'?'F':'X';
-    var teamName=abbr+catAbbr;
+    var teamName;
+    if(seriesNum&&classLetter){
+      teamName=seriesNum+'º '+classLetter+catAbbr; // "7º AF", "6º EM"
+    } else {
+      // Fallback: use first chars of turma name
+      var abbr=nm.replace(/\s*Ano\s*/i,'').replace(/\s+/g,'').slice(0,4).toUpperCase();
+      teamName=abbr+catAbbr;
+    }
     
     // Check if team already exists for this turma+sport+category
     var existing=S.enr.find(function(e){
