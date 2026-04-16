@@ -2109,13 +2109,14 @@ function parseDocxHtml(html,turmaName,turmaYear){
     });
     
     if(existing){
-      // Update players
+      // Update players AND team name
+      existing.tn=teamName; // Always update name to latest format
       var oldPl=(existing.pl||'').split(',').map(function(p){return p.trim()}).filter(function(p){return p});
       players.forEach(function(p){
         if(!oldPl.find(function(op){return op.toLowerCase()===p.toLowerCase()}))oldPl.push(p);
       });
       existing.pl=oldPl.join(', ');
-      result.wrn.push('Equipe "'+existing.tn+'" atualizada com '+players.length+' jogadores');
+      result.wrn.push('Equipe "'+teamName+'" atualizada com '+players.length+' jogadores');
     } else {
       S.enr.push({
         id:uid(),
