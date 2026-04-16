@@ -1901,11 +1901,248 @@ function pI(c){
   c.appendChild(h('div',{'class':'card'},
     h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📤 Importar Planilha'),h('button',{'class':'btn btn-s btn-r',onclick:function(){if(confirm('Limpar TODOS os dados?')){S.cls=[];S.spt=[];S.enr=[];S.brk={};S.locs=[];S.ev={name:'Jogos Internos 2026'};S.ir=null;R()}}},'🗑️ Limpar')),
     h('div',{'class':'card-b'},
-      h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.7'},html:'Importa automaticamente:<br><b style="color:var(--pr)">Turmas</b>, <b style="color:var(--gn)">Esportes</b> e <b style="color:var(--pu)">Inscrições</b><br><span style="color:var(--am)">⚠️ Suporta .xlsx diretamente. Caso alguma turma não seja encontrada, verifique se o nome na coluna "Turma" bate com o cadastrado.</span>'}),
+      h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.7'},html:'Importa automaticamente:<br><b style="color:var(--pr)">Turmas</b>, <b style="color:var(--gn)">Esportes</b> e <b style="color:var(--pu)">Inscrições</b><br><span style="color:var(--am)">⚠️ Suporta .xlsx diretamente.</span>'}),
       dz,res
     )
   ));
+
+  // ── DOCX Ficha de Inscrição Import ──────────────────────────────────
+  var dz2=h('div',{'class':'dz'});
+  dz2.appendChild(h('div',{style:{fontSize:'36px',marginBottom:'8px',opacity:'.6'}},'📄'));
+  dz2.appendChild(h('div',{style:{fontSize:'14px',fontWeight:'600'}},'Importar Ficha de Inscrição (.docx)'));
+  dz2.appendChild(h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'3px'}},'Arquivo com tabela de esportes e jogadores'));
+  var inp2=h('input',{type:'file',accept:'.docx'});
+  inp2.onchange=function(e){if(e.target.files[0])impDocx(e.target.files[0])};
+  dz2.appendChild(inp2);
+  dz2.ondragover=function(e){e.preventDefault();dz2.classList.add('drag')};
+  dz2.ondragleave=function(){dz2.classList.remove('drag')};
+  dz2.ondrop=function(e){e.preventDefault();dz2.classList.remove('drag');if(e.dataTransfer.files[0])impDocx(e.dataTransfer.files[0])};
+
+  var docxRes=h('div',{});
+  if(S._docxResult){
+    var dr=S._docxResult;
+    docxRes.appendChild(h('div',{'class':'iok',html:dr.msg}));
+    if(dr.wrn&&dr.wrn.length)docxRes.appendChild(h('div',{'class':'ier',html:'⚠️ '+dr.wrn.map(function(x){return'• '+x}).join('<br>')}));
+  }
+
+  c.appendChild(h('div',{'class':'card',style:{marginTop:'16px'}},
+    h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📄 Importar Ficha de Inscrição (DOCX)')),
+    h('div',{'class':'card-b'},
+      h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.7'},html:'Importe as fichas de inscrição das turmas no formato <b>.docx</b>.<br>O sistema detecta automaticamente os <b style="color:var(--gn)">esportes</b>, <b style="color:var(--pu)">categorias</b> e <b style="color:var(--pr)">jogadores</b> da tabela.<br><span style="color:var(--am)">O nome da turma será solicitado na importação.</span>'}),
+      dz2,docxRes
+    )
+  ));
+
   c.appendChild(h('div',{style:{marginTop:'14px',textAlign:'center'}},h('button',{'class':'btn',onclick:dlTpl},'📄 Baixar modelo CSV')));
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DOCX FICHA DE INSCRIÇÃO IMPORT
+// ══════════════════════════════════════════════════════════════════════════
+function impDocx(file){
+  if(!file.name.endsWith('.docx')){alert('Arquivo deve ser .docx');return}
+  // Ask turma name
+  var turmaName=prompt('Qual o nome da turma?\n\nExemplo: 6º Ano E, 3º Ano A, etc.');
+  if(!turmaName||!turmaName.trim()){alert('Nome da turma é obrigatório.');return}
+  turmaName=turmaName.trim();
+  var turmaYear=prompt('Qual o ano/série? (opcional)\n\nExemplo: 6º Ano, 3º Ano, etc.')||'';
+
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var arrayBuffer=e.target.result;
+    // Use mammoth to convert to HTML, then parse tables
+    if(typeof mammoth==='undefined'){
+      // Fallback: parse the DOCX ZIP manually to find tables
+      parseDocxTables(arrayBuffer,turmaName,turmaYear.trim());
+    } else {
+      mammoth.convertToHtml({arrayBuffer:arrayBuffer}).then(function(result){
+        parseDocxHtml(result.value,turmaName,turmaYear.trim());
+      }).catch(function(err){
+        alert('Erro ao ler arquivo: '+err.message);
+      });
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Parse DOCX tables from raw XML (no mammoth dependency)
+function parseDocxTables(arrayBuffer,turmaName,turmaYear){
+  // DOCX is a ZIP file - extract word/document.xml
+  var zip=new Blob([arrayBuffer]);
+  var ds=new DecompressionStream('raw');
+  // Use JSZip-like approach with browser APIs
+  try{
+    var bytes=new Uint8Array(arrayBuffer);
+    // Find PK signature
+    if(bytes[0]!==0x50||bytes[1]!==0x4B){alert('Não é um arquivo DOCX válido.');return}
+    // Use the browser's built-in ZIP reading (simple approach: find document.xml)
+    var blob=new Blob([arrayBuffer]);
+    // Try extracting with Response + DecompressionStream isn't available for ZIP
+    // Fallback: use DOMParser on the raw content
+    var textDecoder=new TextDecoder();
+    var content=textDecoder.decode(bytes);
+    // Find all table cells in the raw XML
+    var xmlStart=content.indexOf('<?xml');
+    // This approach won't work well - let's use a simpler approach
+    // Parse the DOCX by reading it as a text file and finding patterns
+    
+    // Better approach: load mammoth from CDN dynamically
+    var script=document.createElement('script');
+    script.src='https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
+    script.onload=function(){
+      mammoth.convertToHtml({arrayBuffer:arrayBuffer}).then(function(result){
+        parseDocxHtml(result.value,turmaName,turmaYear);
+      }).catch(function(err){
+        alert('Erro ao processar: '+err.message);
+      });
+    };
+    script.onerror=function(){
+      alert('Não foi possível carregar a biblioteca. Verifique a conexão com a internet.');
+    };
+    document.head.appendChild(script);
+  }catch(err){
+    alert('Erro ao processar arquivo: '+err.message);
+  }
+}
+
+function parseDocxHtml(html,turmaName,turmaYear){
+  var div=document.createElement('div');
+  div.innerHTML=html;
+  var tables=div.querySelectorAll('table');
+  if(!tables.length){alert('Nenhuma tabela encontrada no documento.');return}
+  
+  var result={sports:0,teams:0,players:0,wrn:[]};
+  
+  // Find or create turma
+  var turma=S.cls.find(function(c){return c.nm.toLowerCase()===turmaName.toLowerCase()});
+  if(!turma){
+    turma={id:uid(),nm:turmaName,yr:turmaYear,pr:'Manhã'};
+    S.cls.push(turma);
+    result.wrn.push('Turma "'+turmaName+'" criada automaticamente');
+  }
+  
+  // Known sport keywords to detect headers
+  var sportKeywords=['FUTEBOL','FUTSAL','HANDEBOL','HANDBALL','VÔLEI','VOLEI','VOLEIBOL','QUEIMADA','BASQUETE','BANDEIRINHA','XADREZ','PEBOLIM','FUTMESA','ATLETISMO','NATAÇÃO','NATACAO','TÊNIS','TENIS','CUBO','SOLETRANDO','MINECRAFT','ARTES','CONHECIMENTOS'];
+  
+  function isSportHeader(text){
+    if(!text)return false;
+    var up=text.toUpperCase().trim();
+    return sportKeywords.some(function(k){return up.indexOf(k)>=0});
+  }
+  
+  function parseSportName(text){
+    var clean=text.replace(/\*+/g,'').trim();
+    // Detect category from name
+    var cat='Misto';
+    var up=clean.toUpperCase();
+    if(up.indexOf('FEM')>=0)cat='Feminino';
+    else if(up.indexOf('MASC')>=0)cat='Masculino';
+    else if(up.indexOf('MISTO')>=0)cat='Misto';
+    // Clean sport name (remove FEM/MASC/MISTO suffix)
+    var sportName=clean.replace(/\s*(FEM\.?|MASC\.?|FEMININO|MASCULINO|MISTO)\s*/gi,'').trim();
+    // Remove trailing dots and spaces
+    sportName=sportName.replace(/[\.\s]+$/,'').trim();
+    return{name:sportName,category:cat};
+  }
+  
+  tables.forEach(function(table){
+    var rows=table.querySelectorAll('tr');
+    if(!rows.length)return;
+    
+    // Current sport for each column
+    var colSports=[];
+    var colPlayers=[];
+    var numCols=0;
+    
+    rows.forEach(function(tr){
+      var cells=tr.querySelectorAll('td');
+      if(!cells.length)return;
+      if(cells.length>numCols)numCols=cells.length;
+      
+      // Initialize arrays if needed
+      while(colSports.length<cells.length){colSports.push(null);colPlayers.push([])}
+      
+      for(var ci=0;ci<cells.length;ci++){
+        var text=cells[ci].textContent.trim();
+        if(!text)continue;
+        
+        if(isSportHeader(text)){
+          // Save previous sport data before switching
+          if(colSports[ci]&&colPlayers[ci].length){
+            saveSportTeam(colSports[ci],colPlayers[ci],turma,result);
+          }
+          colSports[ci]=parseSportName(text);
+          colPlayers[ci]=[];
+        } else if(colSports[ci]){
+          // It's a player name
+          var name=text.replace(/\s*\(.*?\)\s*/g,'').trim(); // Remove (CR/CO) etc
+          if(name&&name.length>1)colPlayers[ci].push(name);
+        }
+      }
+    });
+    
+    // Save remaining
+    for(var ci=0;ci<colSports.length;ci++){
+      if(colSports[ci]&&colPlayers[ci].length){
+        saveSportTeam(colSports[ci],colPlayers[ci],turma,result);
+      }
+    }
+  });
+  
+  function saveSportTeam(sportInfo,players,turma,result){
+    // Find or create sport
+    var sport=S.spt.find(function(s){return s.nm.toLowerCase()===sportInfo.name.toLowerCase()});
+    if(!sport){
+      sport={id:uid(),nm:sportInfo.name,mn:2,mx:20,ct:['Masculino','Feminino'],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
+      S.spt.push(sport);
+      result.sports++;
+    }
+    // Ensure category exists
+    if(sport.ct.indexOf(sportInfo.category)<0&&sportInfo.category==='Misto'){
+      sport.ct.push('Misto');
+    }
+    
+    // Create team name
+    var abbr=turma.nm.replace(/\s*Ano\s*/i,' ').replace(/[aeiou\s]/gi,'').slice(0,3).toUpperCase();
+    if(abbr.length<2)abbr=turma.nm.slice(0,3).toUpperCase();
+    var catAbbr=sportInfo.category==='Masculino'?'M':sportInfo.category==='Feminino'?'F':'X';
+    var teamName=abbr+catAbbr;
+    
+    // Check if team already exists for this turma+sport+category
+    var existing=S.enr.find(function(e){
+      return e.ci===turma.id&&e.si===sport.id&&e.ct===sportInfo.category;
+    });
+    
+    if(existing){
+      // Update players
+      var oldPl=(existing.pl||'').split(',').map(function(p){return p.trim()}).filter(function(p){return p});
+      players.forEach(function(p){
+        if(!oldPl.find(function(op){return op.toLowerCase()===p.toLowerCase()}))oldPl.push(p);
+      });
+      existing.pl=oldPl.join(', ');
+      result.wrn.push('Equipe "'+existing.tn+'" atualizada com '+players.length+' jogadores');
+    } else {
+      S.enr.push({
+        id:uid(),
+        tn:teamName,
+        ci:turma.id,
+        si:sport.id,
+        ct:sportInfo.category,
+        pl:players.join(', '),
+        st:'approved'
+      });
+      result.teams++;
+    }
+    result.players+=players.length;
+  }
+  
+  logAudit('Importação DOCX','Turma "'+turmaName+'": '+result.sports+' esporte(s) criado(s), '+result.teams+' equipe(s), '+result.players+' jogador(es)');
+  
+  S._docxResult={
+    msg:'✅ <b>Importação concluída!</b><br>📚 Turma: <b>'+turmaName+'</b><br>⚽ '+result.sports+' esporte(s) criado(s)<br>📋 '+result.teams+' equipe(s) criada(s)<br>👥 '+result.players+' jogador(es) importado(s)',
+    wrn:result.wrn
+  };
+  R();
 }
 
 function modal(c,title,buildFn){
