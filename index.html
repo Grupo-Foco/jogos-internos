@@ -83,7 +83,7 @@ input,select{font-family:inherit}
 .sc-v{font-size:26px;font-weight:800;margin-top:2px;font-family:'Space Mono',monospace}
 .sc.cy .sc-v{color:var(--pr)}.sc.gn .sc-v{color:var(--gn)}.sc.am .sc-v{color:var(--am)}.sc.pu .sc-v{color:var(--pu)}
 .fg{margin-bottom:12px}.fl{display:block;font-size:10px;font-weight:600;color:var(--tx2);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
-.fi,.fs{width:100%;padding:8px 10px;background:var(--bg3);border:1px solid var(--bd);border-radius:var(--r);color:var(--tx);font-size:16px;outline:none;transition:border-color var(--t)}
+.fi,.fs{width:100%;padding:8px 10px;background:var(--bg3);border:1px solid var(--bd);border-radius:var(--r);color:var(--tx);font-size:16px;outline:none;transition:border-color var(--t);text-transform:uppercase}
 .fi:focus,.fs:focus{border-color:var(--pr)}.fs option{background:var(--bg2);color:var(--tx)}@media(min-width:769px){.fi,.fs{font-size:13px}}
 .fr{display:flex;gap:8px}.fr>*{flex:1}
 .tw{overflow-x:auto}table{width:100%;border-collapse:collapse}
@@ -765,9 +765,12 @@ function logAudit(action,details){
   // Keep only last 500 entries to avoid bloat
   if(S.auditLog.length>500)S.auditLog=S.auditLog.slice(0,500);
 }
-function nrmYr(y){return(y||'').replace(/[°º]/g,'º').replace(/\s+/g,' ').trim()}
+function nrmYr(y){return(y||'').replace(/[°º]/g,'º').replace(/\s+/g,' ').trim().toUpperCase()}
 function getAnos(){var a=[];S.cls.forEach(function(c){var y=nrmYr(c.yr);if(y&&a.indexOf(y)<0)a.push(y)});a.sort();return a}
 function getClsByAno(ano){return S.cls.filter(function(c){return nrmYr(c.yr)===ano})}
+
+// Uppercase helper for user input
+function uc(s){return(s||'').trim().toUpperCase()}
 
 // Build standardized team name from turma name + category
 function buildTeamName(turmaNm,category){
@@ -1180,7 +1183,7 @@ function pC(c){
       h('div',{'class':'fg'},h('label',{'class':'fl'},'Ano'),h('input',{'class':'fi',oninput:function(e){f.yr=e.target.value}})),
       h('div',{'class':'fg'},h('label',{'class':'fl'},'Período'),h('select',{'class':'fs',onchange:function(e){f.pr=e.target.value}},h('option',{},'Manhã'),h('option',{},'Tarde'),h('option',{},'Integral')))
     ));
-    return function(){if(!f.nm.trim())return;S.cls.push({id:uid(),nm:f.nm,yr:f.yr,pr:f.pr});logAudit('Criação de turma','Turma "'+f.nm+'" criada');close()};
+    return function(){if(!f.nm.trim())return;S.cls.push({id:uid(),nm:uc(f.nm),yr:uc(f.yr),pr:f.pr});logAudit('Criação de turma','Turma "'+uc(f.nm)+'" criada');close()};
   });
 }
 
@@ -1245,7 +1248,7 @@ function pS(c){
     }
     renderTB();
     body.appendChild(h('div',{'class':'fg'},h('label',{'class':'fl'},'Critérios de Desempate (arraste para ordenar)'),tbDiv));
-    return function(){if(!f.nm.trim())return;S.spt.push({id:uid(),nm:f.nm,mn:f.mn,mx:f.mx,ct:f.ct.slice(),dur:f.dur||14,tiebreakers:f.tiebreakers.slice()});logAudit('Criação de esporte','Esporte "'+f.nm+'" criado');close()};
+    return function(){if(!f.nm.trim())return;S.spt.push({id:uid(),nm:uc(f.nm),mn:f.mn,mx:f.mx,ct:f.ct.slice(),dur:f.dur||14,tiebreakers:f.tiebreakers.slice()});logAudit('Criação de esporte','Esporte "'+uc(f.nm)+'" criado');close()};
   });
   // Edit sport modal
   if(S.mod&&S.mod.tp==='editSport'){
@@ -2036,7 +2039,7 @@ function parseDocxHtml(html,turmaName,turmaYear){
   // Find or create turma
   var turma=S.cls.find(function(c){return c.nm.toLowerCase()===turmaName.toLowerCase()});
   if(!turma){
-    turma={id:uid(),nm:turmaName,yr:turmaYear,pr:'Manhã'};
+    turma={id:uid(),nm:uc(turmaName),yr:uc(turmaYear),pr:'Manhã'};
     S.cls.push(turma);
     result.wrn.push('Turma "'+turmaName+'" criada automaticamente');
   }
@@ -2113,7 +2116,7 @@ function parseDocxHtml(html,turmaName,turmaYear){
     // Find or create sport
     var sport=S.spt.find(function(s){return s.nm.toLowerCase()===sportInfo.name.toLowerCase()});
     if(!sport){
-      sport={id:uid(),nm:sportInfo.name,mn:2,mx:20,ct:['Masculino','Feminino'],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
+      sport={id:uid(),nm:uc(sportInfo.name),mn:2,mx:20,ct:['Masculino','Feminino'],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
       S.spt.push(sport);
       result.sports++;
     }
@@ -4401,7 +4404,14 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
     MT.loading=false;
     MT.dataLoaded=true; // Flag: data has been loaded, safe to save
     // Auto-fix team names to standardized format
-    if(ok){var nFixed=autoFixTeamNames();if(nFixed>0)console.log('autoFixTeamNames: corrected '+nFixed+' team name(s)')}
+    if(ok){
+      // Normalize all data to uppercase
+      S.cls.forEach(function(c){c.nm=uc(c.nm);c.yr=uc(c.yr)});
+      S.spt.forEach(function(s){s.nm=uc(s.nm)});
+      S.enr.forEach(function(e){e.tn=uc(e.tn)});
+      var nFixed=autoFixTeamNames();
+      if(nFixed>0)console.log('autoFixTeamNames: corrected '+nFixed+' team name(s)');
+    }
     if(ok){R()}else{R()} // Render either way after load attempt
     // Check if school is active
     if(MT.schoolCode){
