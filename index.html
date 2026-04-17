@@ -765,8 +765,44 @@ function logAudit(action,details){
   // Keep only last 500 entries to avoid bloat
   if(S.auditLog.length>500)S.auditLog=S.auditLog.slice(0,500);
 }
-function getAnos(){var a=[];S.cls.forEach(function(c){var y=c.yr||'';if(y&&a.indexOf(y)<0)a.push(y)});a.sort();return a}
-function getClsByAno(ano){return S.cls.filter(function(c){return c.yr===ano})}
+function nrmYr(y){return(y||'').replace(/[°º]/g,'º').replace(/\s+/g,' ').trim()}
+function getAnos(){var a=[];S.cls.forEach(function(c){var y=nrmYr(c.yr);if(y&&a.indexOf(y)<0)a.push(y)});a.sort();return a}
+function getClsByAno(ano){return S.cls.filter(function(c){return nrmYr(c.yr)===ano})}
+
+// Build standardized team name from turma name + category
+function buildTeamName(turmaNm,category){
+  var nm=(turmaNm||'').trim();
+  var numMatch=nm.match(/(\d+)/);
+  var seriesNum=numMatch?numMatch[1]:'';
+  // Remove "Ano" and numbers to find the class letter
+  var cleaned=nm.replace(/[°º]/g,'').replace(/\d+/g,'').replace(/\bano\b/gi,'').trim();
+  var words=cleaned.split(/\s+/).filter(function(w){return w.length>0});
+  var classLetter='';
+  // Look for a single letter word (the class identifier: A, B, C, etc.)
+  for(var i=words.length-1;i>=0;i--){
+    var w=words[i].replace(/[^A-Za-z]/g,'');
+    if(w.length===1){classLetter=w.toUpperCase();break}
+  }
+  var catAbbr=category==='Masculino'?'M':category==='Feminino'?'F':'X';
+  if(seriesNum&&classLetter)return seriesNum+'º '+classLetter+catAbbr;
+  if(seriesNum)return seriesNum+'º '+catAbbr;
+  return nm.replace(/\s+/g,'').slice(0,4).toUpperCase()+catAbbr;
+}
+
+// Auto-fix all team names to standard format
+function autoFixTeamNames(){
+  var fixed=0;
+  S.enr.forEach(function(e){
+    var cl=S.cls.find(function(c){return c.id===e.ci});
+    if(!cl)return;
+    var correctName=buildTeamName(cl.nm,e.ct);
+    if(e.tn!==correctName){
+      e.tn=correctName;
+      fixed++;
+    }
+  });
+  return fixed;
+}
 function getEnrByAno(ano,ap){var cids=getClsByAno(ano).map(function(c){return c.id});return ap.filter(function(e){return cids.indexOf(e.ci)>=0})}
 
 function toggleTheme(){S.theme=S.theme==='dark'?'light':'dark';document.body.className=S.theme==='light'?'light':'';R()}
@@ -2086,22 +2122,8 @@ function parseDocxHtml(html,turmaName,turmaYear){
       sport.ct.push('Misto');
     }
     
-    // Create team name: "7º Ano A" → "7º A", then add category letter
-    // Extract the series number and class letter from turma name
-    var nm=turma.nm;
-    var numMatch=nm.match(/(\d+)/);
-    var letterMatch=nm.match(/[A-Za-z]\s*$/); // last letter = class identifier
-    var seriesNum=numMatch?numMatch[1]:'';
-    var classLetter=letterMatch?letterMatch[0].trim().toUpperCase():'';
-    var catAbbr=sportInfo.category==='Masculino'?'M':sportInfo.category==='Feminino'?'F':'X';
-    var teamName;
-    if(seriesNum&&classLetter){
-      teamName=seriesNum+'º '+classLetter+catAbbr; // "7º AF", "6º EM"
-    } else {
-      // Fallback: use first chars of turma name
-      var abbr=nm.replace(/\s*Ano\s*/i,'').replace(/\s+/g,'').slice(0,4).toUpperCase();
-      teamName=abbr+catAbbr;
-    }
+    // Create team name: "7º Ano A" → "7º AF"
+    var teamName=buildTeamName(turma.nm,sportInfo.category);
     
     // Check if team already exists for this turma+sport+category
     var existing=S.enr.find(function(e){
@@ -4378,6 +4400,8 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
   loadFromSupabase(function(ok){
     MT.loading=false;
     MT.dataLoaded=true; // Flag: data has been loaded, safe to save
+    // Auto-fix team names to standardized format
+    if(ok){var nFixed=autoFixTeamNames();if(nFixed>0)console.log('autoFixTeamNames: corrected '+nFixed+' team name(s)')}
     if(ok){R()}else{R()} // Render either way after load attempt
     // Check if school is active
     if(MT.schoolCode){
