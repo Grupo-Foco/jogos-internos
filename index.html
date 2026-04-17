@@ -1167,7 +1167,26 @@ function pC(c){
         h('td',{'data-label':'Turma',style:{fontWeight:'600'}},x.nm),
         h('td',{'data-label':'Ano'},x.yr||'—'),
         h('td',{'data-label':'Período'},h('span',{'class':'badge bc'},x.pr)),
-        h('td',{},h('button',{'class':'btn btn-s btn-r',onclick:(function(id,nm){return function(){S.cls=S.cls.filter(function(y){return y.id!==id});logAudit('Remoção de turma','Turma "'+nm+'" removida');R()}})(x.id,x.nm)},'✕'))
+        h('td',{},h('button',{'class':'btn btn-s btn-r',onclick:(function(id,nm){return function(){
+          if(!confirm('Remover turma "'+nm+'"?\n\nTodas as inscrições e chaveamentos desta turma serão removidos.'))return;
+          // Remove enrollments linked to this turma
+          var enrIds=S.enr.filter(function(e){return e.ci===id}).map(function(e){return e.id});
+          S.enr=S.enr.filter(function(e){return e.ci!==id});
+          // Clean brackets: remove teams from this turma
+          Object.keys(S.brk).forEach(function(bk){
+            Object.keys(S.brk[bk]).forEach(function(ct){
+              S.brk[bk][ct]=S.brk[bk][ct].map(function(rd){return Object.assign({},rd,{m:rd.m.map(function(m){
+                var t1gone=enrIds.indexOf(m.t1)>=0;
+                var t2gone=enrIds.indexOf(m.t2)>=0;
+                if(t1gone||t2gone)return Object.assign({},m,{t1:t1gone?'BYE':m.t1,t2:t2gone?'BYE':m.t2,s1:null,s2:null,w:null});
+                return m;
+              })})});
+            });
+          });
+          S.cls=S.cls.filter(function(y){return y.id!==id});
+          logAudit('Remoção de turma','Turma "'+nm+'" removida com '+enrIds.length+' inscrição(ões)');
+          R();
+        }})(x.id,x.nm)},'✕'))
       );
     });
 
@@ -1203,7 +1222,20 @@ function pS(c){
         h('div',{'class':'card-t'},s.nm),
         h('div',{style:{display:'flex',gap:'3px'}},
           h('button',{'class':'btn btn-s',onclick:(function(sp){return function(){S.mod={tp:'editSport',sport:sp};R()}})(s)},'✏️'),
-          h('button',{'class':'btn btn-s btn-r',onclick:(function(id,nm){return function(){S.spt=S.spt.filter(function(x){return x.id!==id});logAudit('Remoção de esporte','Esporte "'+nm+'" removido');R()}})(s.id,s.nm)},'✕')
+          h('button',{'class':'btn btn-s btn-r',onclick:(function(id,nm){return function(){
+            if(!confirm('Remover esporte "'+nm+'"?\n\nTodas as inscrições e chaveamentos deste esporte serão removidos.'))return;
+            var enrCount=S.enr.filter(function(e){return e.si===id}).length;
+            S.enr=S.enr.filter(function(e){return e.si!==id});
+            // Remove brackets for this sport
+            Object.keys(S.brk).forEach(function(bk){
+              var parts=bk.split('__');
+              var bkSport=parts.length>1?parts[1]:parts[0];
+              if(bkSport===id)delete S.brk[bk];
+            });
+            S.spt=S.spt.filter(function(x){return x.id!==id});
+            logAudit('Remoção de esporte','Esporte "'+nm+'" removido com '+enrCount+' inscrição(ões)');
+            R();
+          }})(s.id,s.nm)},'✕')
         )
       ),
       h('div',{'class':'card-b'},
