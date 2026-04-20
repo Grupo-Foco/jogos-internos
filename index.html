@@ -786,10 +786,10 @@ function buildTeamName(turmaNm,category){
     var w=words[i].replace(/[^A-Za-z]/g,'');
     if(w.length===1){classLetter=w.toUpperCase();break}
   }
-  var catAbbr=category==='Masculino'?'M':category==='Feminino'?'F':'X';
-  if(seriesNum&&classLetter)return seriesNum+'º '+classLetter+catAbbr;
+  var catAbbr=category==='Masculino'?'(M)':category==='Feminino'?'(F)':'(X)';
+  if(seriesNum&&classLetter)return seriesNum+'º '+classLetter+' '+catAbbr;
   if(seriesNum)return seriesNum+'º '+catAbbr;
-  return nm.replace(/\s+/g,'').slice(0,4).toUpperCase()+catAbbr;
+  return nm.replace(/\s+/g,'').slice(0,4).toUpperCase()+' '+catAbbr;
 }
 
 // Auto-fix all team names to standard format
@@ -2161,7 +2161,7 @@ function parseDocxHtml(html,turmaName,turmaYear){
       sport.ct.push('Misto');
     }
     
-    // Create team name: "7º Ano A" → "7º AF"
+    // Create team name: "7º Ano A" → "7º A (F)"
     var teamName=buildTeamName(turma.nm,sportInfo.category);
     
     // Check if team already exists for this turma+sport+category
@@ -2868,7 +2868,7 @@ function mEnr(c){
     stSel.appendChild(opt);
   });
 
-  var tnInput=h('input',{'class':'fi',placeholder:'Ex: 3º AM',value:f.tn,oninput:function(e){f.tn=e.target.value}});
+  var tnInput=h('input',{'class':'fi',placeholder:'Ex: 3º A (M)',value:f.tn,oninput:function(e){f.tn=e.target.value}});
   var plInput=h('input',{'class':'fi',placeholder:'João, Maria, Pedro...',value:f.pl,oninput:function(e){f.pl=e.target.value}});
 
   if(f.si)buildCatBtns();
