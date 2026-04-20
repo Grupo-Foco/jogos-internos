@@ -2068,8 +2068,12 @@ function parseDocxHtml(html,turmaName,turmaYear){
   
   var result={sports:0,teams:0,players:0,wrn:[]};
   
+  // Normalize turmaName to avoid duplicates from spacing/degree-char variations
+  turmaName=nrmYr(turmaName);
+  turmaYear=nrmYr(turmaYear);
+  
   // Find or create turma
-  var turma=S.cls.find(function(c){return c.nm.toLowerCase()===turmaName.toLowerCase()});
+  var turma=S.cls.find(function(c){return nrmYr(c.nm)===turmaName});
   if(!turma){
     turma={id:uid(),nm:uc(turmaName),yr:uc(turmaYear),pr:'Manhã'};
     S.cls.push(turma);
