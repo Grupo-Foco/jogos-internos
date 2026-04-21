@@ -689,61 +689,305 @@ function renderMasterPanel(){
   if(MT.mod&&MT.mod.tp==='addSchool')mAddSchool(root);
 }
 
+// ── HTML Dashboard Parser (JIM format) ─────────────────────────────────────
+function parseJimDashboardHtml(htmlText){
+  // Extract RAW array from the dashboard HTML
+  var rawMatch=htmlText.match(/const RAW\s*=\s*(\[[\s\S]*?\]);/);
+  if(!rawMatch)return null;
+  var raw;
+  try{raw=JSON.parse(rawMatch[1])}catch(e){return null}
+  if(!Array.isArray(raw)||!raw.length)return null;
+
+  var COLORS=['AZUL','VERDE','VERMELHO','AMARELO','ROXO','ROSA','PRETO','BRANCO','CINZA','LARANJA'];
+  function getColor(e){for(var c of COLORS)if(e.includes(c))return c;return''}
+  function getSerie(e){for(var c of COLORS)if(e.endsWith(' '+c))return e.slice(0,-(c.length+1));return e}
+  function isPH(e){return['LUGAR','VENC'].some(function(p){return e.includes(p)})}
+  function uid2(){return Math.random().toString(36).slice(2,9)}
+
+  // Extract unique turmas (series), sports, locations
+  var turmasSet={}, sptSet={}, locsSet={};
+  raw.forEach(function(r){
+    [r[7],r[8]].forEach(function(e){
+      if(!isPH(e)){
+        var serie=getSerie(e), cor=getColor(e);
+        var key=serie+'|'+cor;
+        if(!turmasSet[key])turmasSet[key]={serie:serie,cor:cor};
+      }
+    });
+    sptSet[r[4]]=true;
+    locsSet[r[3]]=true;
+  });
+
+  // Build turmas list — map "8º ANO ROXO" → turma object compatible with S.cls
+  var cls=Object.values(turmasSet).map(function(t){
+    return{id:uid2(),nm:t.serie+(t.cor?' '+t.cor:''),yr:t.serie,clr:t.cor||'',src:'jim'};
+  });
+
+  // Build sports list — parse "FUTEBOL MASC" → name + gender
+  var spt=Object.keys(sptSet).map(function(m){
+    var gender='Misto';
+    if(m.endsWith(' MASC'))gender='Masculino';
+    else if(m.endsWith(' FEM'))gender='Feminino';
+    var base=m.replace(/ (MASC|FEM|MISTO)$/,'');
+    return{id:uid2(),nm:base,gender:gender,fullNm:m,src:'jim'};
+  });
+
+  // Build locations list
+  var locs=Object.keys(locsSet).map(function(l){return{id:uid2(),nm:l}});
+
+  // Build schedule entries
+  var sched=raw.map(function(r){
+    var phaseNum=r[6]; // 1=RODÍZIO, 2=SEMIFINAL, 3=FINAL
+    var phaseLabel=r[5]; // "RODÍZIO", "SEMIFINAL", "FINAL X ANO", etc.
+    var dia=r[1]; // 11-15 (day numbers)
+    return{
+      id:uid2(),
+      jimId:r[0],
+      day:dia,
+      time:r[2],
+      local:r[3],
+      modalidade:r[4],
+      fase:phaseLabel,
+      faseNum:phaseNum,
+      e1:r[7],
+      e2:r[8],
+      sexo:r[9]
+    };
+  });
+
+  return{cls:cls,spt:spt,locs:locs,sched:sched,totalJogos:raw.length};
+}
+
+// ── Convert parsed JIM data into school's S-compatible format ───────────────
+function jimDataToSchoolState(parsed, schoolAdminPass){
+  // Map sports to S.spt format
+  var spt=parsed.spt.map(function(sp){
+    return{id:sp.id,nm:sp.fullNm,gender:sp.gender,cats:[],pts:{w:3,d:1,l:0,wo:0},tiebreaker:['gd','yc','rc','w'],scoring:{}};
+  });
+
+  // Map turmas to S.cls format
+  var cls=parsed.cls.map(function(c){
+    return{id:c.id,nm:c.nm,yr:c.yr,clr:c.clr};
+  });
+
+  // Map locations
+  var locs=parsed.locs.map(function(l){return{id:l.id,nm:l.nm}});
+
+  // Build enrollments: for each unique (turma, sport) pair found in schedule
+  var enrSet={};
+  parsed.sched.forEach(function(g){
+    var isPH=function(e){return['LUGAR','VENC'].some(function(p){return e.includes(p)})};
+    [g.e1,g.e2].forEach(function(team){
+      if(!isPH(team)){
+        var sp=parsed.spt.find(function(s){return s.fullNm===g.modalidade});
+        var cl=parsed.cls.find(function(c){return team.startsWith(c.serie)||team===c.nm});
+        if(sp&&cl){
+          var key=cl.id+'|'+sp.id;
+          if(!enrSet[key])enrSet[key]={id:Math.random().toString(36).slice(2,9),cls:cl.id,spt:sp.id,nm:team};
+        }
+      }
+    });
+  });
+  var enr=Object.values(enrSet);
+
+  return{
+    cls:cls,spt:spt,enr:enr,brk:{},locs:locs,
+    ev:{name:'Jogos Internos'},
+    logins:[],judgeLogins:[],recursos:[],
+    adminPass:schoolAdminPass,
+    thirdPlace:{},
+    appInfo:{author:'',contact:'',version:'3.0'},
+    _jimSched:parsed.sched // stored for future bracket/schedule generation
+  };
+}
+
 function mAddSchool(root){
   var f={name:'',code:'',city:'',contact:'',adminPass:'admin123'};
+  // Step: 'form' | 'import-preview'
+  var step='form';
+  var jimParsed=null; // parsed dashboard data
+  var importErr='';
+
   var ov=h('div',{'class':'ov'});ov.onclick=function(e){if(e.target===ov){MT.mod=null;renderMasterPanel()}};
   var close=function(){MT.mod=null;renderMasterPanel()};
-  var errDiv=h('div',{style:{display:'none',color:'#f87171',fontSize:'12px',marginBottom:'8px'}});
 
-  var nameInp=h('input',{'class':'fi',placeholder:'Ex: Colégio Estadual XYZ',oninput:function(e){
-    f.name=e.target.value;
-    if(!codeInp.value){
-      var auto=f.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,20);
-      codeInp.value=auto;f.code=auto;
+  function doCreate(importedState){
+    f.name=(document.getElementById('mas-name')||{}).value||f.name;
+    f.code=(document.getElementById('mas-code')||{}).value||f.code;
+    f.city=(document.getElementById('mas-city')||{}).value||f.city;
+    f.contact=(document.getElementById('mas-contact')||{}).value||f.contact;
+    f.adminPass=(document.getElementById('mas-pass')||{}).value||f.adminPass;
+    f.name=f.name.trim();
+    f.code=f.code.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
+    f.city=f.city.trim();f.contact=f.contact.trim();f.adminPass=f.adminPass.trim()||'admin123';
+    var errDiv=document.getElementById('mas-err');
+    if(!f.name){if(errDiv){errDiv.style.display='block';errDiv.textContent='Digite o nome.'}return}
+    if(!f.code||f.code.length<3){if(errDiv){errDiv.style.display='block';errDiv.textContent='Código deve ter pelo menos 3 caracteres.'}return}
+    if(MT.schools.find(function(s){return s.code===f.code})){if(errDiv){errDiv.style.display='block';errDiv.textContent='Código já existe.'}return}
+    MT.schools.push({id:uid(),code:f.code,name:f.name,city:f.city,contact:f.contact,adminPass:f.adminPass,status:'active',createdAt:new Date().toLocaleDateString('pt-BR')});
+    var initialData=importedState||{cls:[],spt:[],enr:[],brk:{},locs:[],ev:{name:'Jogos Internos 2026'},logins:[],judgeLogins:[],recursos:[],adminPass:f.adminPass,thirdPlace:{},appInfo:{author:'',contact:'',version:'3.0'}};
+    initialData.adminPass=f.adminPass;
+    if(S.sb.url&&S.sb.key){
+      fetch(S.sb.url+'/rest/v1/jogos_data',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key,'Prefer':'resolution=merge-duplicates'},
+        body:JSON.stringify({id:'escola_'+f.code,data:JSON.stringify(initialData),updated_at:new Date().toISOString()})
+      }).catch(function(e){console.error(e)});
     }
-  }});
-  var codeInp=h('input',{'class':'fi',placeholder:'Ex: colegio-xyz',style:{fontFamily:'monospace'},oninput:function(e){f.code=e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,'')}});
-  var cityInp=h('input',{'class':'fi',placeholder:'Ex: Goiânia - GO',oninput:function(e){f.city=e.target.value}});
-  var contactInp=h('input',{'class':'fi',placeholder:'Email ou telefone',oninput:function(e){f.contact=e.target.value}});
-  var passInp=h('input',{'class':'fi',value:'admin123',oninput:function(e){f.adminPass=e.target.value}});
+    saveMasterData(function(){MT.mod=null;loadMasterData()});
+  }
 
-  ov.appendChild(h('div',{'class':'md'},
-    h('div',{'class':'md-h'},h('div',{'class':'md-t'},'🏫 Nova Escola'),h('button',{'class':'btn btn-s',onclick:close},'✕')),
-    h('div',{'class':'md-b'},
-      errDiv,
-      h('div',{'class':'fg'},h('label',{'class':'fl'},'Nome da Escola'),nameInp),
-      h('div',{'class':'fr'},
-        h('div',{'class':'fg'},h('label',{'class':'fl'},'Código (URL)'),codeInp),
-        h('div',{'class':'fg'},h('label',{'class':'fl'},'Cidade / Estado'),cityInp)
-      ),
-      h('div',{'class':'fr'},
-        h('div',{'class':'fg'},h('label',{'class':'fl'},'Contato'),contactInp),
-        h('div',{'class':'fg'},h('label',{'class':'fl'},'Senha Admin'),passInp)
-      ),
-      h('div',{style:{fontSize:'11px',color:'var(--tx3)',lineHeight:'1.6',marginTop:'4px'}},
-        '💡 O código será usado na URL: ?escola='+((f.code||'codigo'))+'  ·  A escola faz login com: admin / '+(f.adminPass||'admin123'))
-    ),
-    h('div',{'class':'md-f'},
-      h('button',{'class':'btn',onclick:close},'Cancelar'),
-      h('button',{'class':'btn btn-p',onclick:function(){
-        f.name=nameInp.value.trim();f.code=codeInp.value.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
-        f.city=cityInp.value.trim();f.contact=contactInp.value.trim();f.adminPass=passInp.value.trim()||'admin123';
-        if(!f.name){errDiv.style.display='block';errDiv.textContent='Digite o nome.';return}
-        if(!f.code||f.code.length<3){errDiv.style.display='block';errDiv.textContent='Código deve ter pelo menos 3 caracteres.';return}
-        if(MT.schools.find(function(s){return s.code===f.code})){errDiv.style.display='block';errDiv.textContent='Código já existe.';return}
-        MT.schools.push({id:uid(),code:f.code,name:f.name,city:f.city,contact:f.contact,adminPass:f.adminPass,status:'active',createdAt:new Date().toLocaleDateString('pt-BR')});
-        // Create initial empty data for this school in Supabase
-        if(S.sb.url&&S.sb.key){
-          fetch(S.sb.url+'/rest/v1/jogos_data',{
-            method:'POST',
-            headers:{'Content-Type':'application/json','apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key,'Prefer':'resolution=merge-duplicates'},
-            body:JSON.stringify({id:'escola_'+f.code,data:JSON.stringify({cls:[],spt:[],enr:[],brk:{},locs:[],ev:{name:'Jogos Internos 2026'},logins:[],judgeLogins:[],recursos:[],adminPass:f.adminPass,thirdPlace:{},appInfo:{author:'',contact:'',version:'3.0'}}),updated_at:new Date().toISOString()})
-          }).catch(function(e){console.error(e)});
-        }
-        saveMasterData(function(){MT.mod=null;loadMasterData()});
-      }},'Criar Escola')
-    )
-  ));
+  function renderStep(){
+    // Remove existing modal content
+    var existing=ov.querySelector('.md');
+    if(existing)ov.removeChild(existing);
+
+    if(step==='form'){
+      var errDiv=h('div',{id:'mas-err',style:{display:'none',color:'#f87171',fontSize:'12px',marginBottom:'8px'}});
+      var nameInp=h('input',{id:'mas-name','class':'fi',placeholder:'Ex: Colégio Estadual XYZ',value:f.name,oninput:function(e){
+        f.name=e.target.value;
+        var ci=document.getElementById('mas-code');
+        if(ci&&!ci.value){var auto=f.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,20);ci.value=auto;f.code=auto;}
+      }});
+      var codeInp=h('input',{id:'mas-code','class':'fi',placeholder:'Ex: colegio-xyz',value:f.code,style:{fontFamily:'monospace'},oninput:function(e){f.code=e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,'')}});
+      var cityInp=h('input',{id:'mas-city','class':'fi',placeholder:'Ex: Goiânia - GO',value:f.city,oninput:function(e){f.city=e.target.value}});
+      var contactInp=h('input',{id:'mas-contact','class':'fi',placeholder:'Email ou telefone',value:f.contact,oninput:function(e){f.contact=e.target.value}});
+      var passInp=h('input',{id:'mas-pass','class':'fi',value:f.adminPass,oninput:function(e){f.adminPass=e.target.value}});
+
+      // ── HTML Import section ──
+      var importErrDiv=h('div',{style:{display:importErr?'block':'none',color:'#f87171',fontSize:'11px',margin:'6px 0 0'}},importErr);
+      var htmlInp=h('input',{type:'file',accept:'.html',style:{display:'none'}});
+      htmlInp.onchange=function(e){
+        var file=e.target.files[0];if(!file)return;
+        var reader=new FileReader();
+        reader.onload=function(ev){
+          var parsed=parseJimDashboardHtml(ev.target.result);
+          if(!parsed){importErr='Arquivo não reconhecido. Verifique se é um dashboard JIM válido.';importErrDiv.style.display='block';return}
+          jimParsed=parsed;
+          importErr='';
+          step='import-preview';
+          renderStep();
+        };
+        reader.readAsText(file);
+      };
+
+      var importBox=h('div',{style:{background:'rgba(139,92,246,.08)',border:'1px solid rgba(139,92,246,.25)',borderRadius:'8px',padding:'12px 14px',marginTop:'14px'}},
+        h('div',{style:{fontWeight:'600',fontSize:'12px',color:'var(--pu)',marginBottom:'6px'}},'🗂️ Importar dados iniciais (opcional)'),
+        h('div',{style:{fontSize:'11px',color:'var(--tx2)',marginBottom:'10px',lineHeight:'1.6'}},
+          'Importe um dashboard HTML (formato JIM) para popular a escola com turmas, esportes, locais e agendamentos automaticamente.'
+        ),
+        h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap'}},
+          h('button',{'class':'btn btn-s',style:{background:'rgba(139,92,246,.15)',color:'var(--pu)',border:'1px solid rgba(139,92,246,.3)'},onclick:function(){htmlInp.click()}},'📊 Upload Dashboard HTML'),
+          h('div',{style:{fontSize:'10px',color:'var(--tx3)',alignSelf:'center',fontStyle:'italic'}},'Formatos XLSX e DOCX disponíveis no painel admin da escola')
+        ),
+        importErrDiv
+      );
+
+      ov.appendChild(h('div',{'class':'md'},
+        h('div',{'class':'md-h'},h('div',{'class':'md-t'},'🏫 Nova Escola'),h('button',{'class':'btn btn-s',onclick:close},'✕')),
+        h('div',{'class':'md-b'},
+          errDiv,
+          h('div',{'class':'fg'},h('label',{'class':'fl'},'Nome da Escola'),nameInp),
+          h('div',{'class':'fr'},
+            h('div',{'class':'fg'},h('label',{'class':'fl'},'Código (URL)'),codeInp),
+            h('div',{'class':'fg'},h('label',{'class':'fl'},'Cidade / Estado'),cityInp)
+          ),
+          h('div',{'class':'fr'},
+            h('div',{'class':'fg'},h('label',{'class':'fl'},'Contato'),contactInp),
+            h('div',{'class':'fg'},h('label',{'class':'fl'},'Senha Admin'),passInp)
+          ),
+          h('div',{style:{fontSize:'11px',color:'var(--tx3)',lineHeight:'1.6',marginTop:'4px'}},
+            '💡 URL: ?escola='+(f.code||'codigo')+'  ·  Login admin / '+(f.adminPass||'admin123')),
+          importBox,
+          htmlInp
+        ),
+        h('div',{'class':'md-f'},
+          h('button',{'class':'btn',onclick:close},'Cancelar'),
+          h('button',{'class':'btn btn-p',onclick:function(){
+            f.name=(document.getElementById('mas-name')||{}).value||'';
+            f.code=(document.getElementById('mas-code')||{}).value||'';
+            f.city=(document.getElementById('mas-city')||{}).value||'';
+            f.contact=(document.getElementById('mas-contact')||{}).value||'';
+            f.adminPass=(document.getElementById('mas-pass')||{}).value||'admin123';
+            doCreate(null);
+          }},'Criar Escola (sem importar)')
+        )
+      ));
+
+    } else if(step==='import-preview'){
+      // Preview screen
+      var p=jimParsed;
+      var state=jimDataToSchoolState(p, f.adminPass);
+
+      // Summary cards
+      function statCard(icon,label,val,clr){
+        return h('div',{style:{background:'var(--c2)',border:'1px solid var(--br)',borderRadius:'8px',padding:'10px 14px',flex:'1',minWidth:'80px',textAlign:'center'}},
+          h('div',{style:{fontSize:'20px'}},''+val),
+          h('div',{style:{fontSize:'10px',color:clr||'var(--tx2)',marginTop:'2px'}},icon+' '+label)
+        );
+      }
+
+      // Turmas preview (first 12)
+      var clsPreview=state.cls.slice(0,12).map(function(c){
+        return h('span',{style:{display:'inline-block',background:'rgba(139,92,246,.12)',border:'1px solid rgba(139,92,246,.25)',borderRadius:'4px',padding:'2px 7px',fontSize:'10px',color:'var(--pu)',margin:'2px'}},c.nm);
+      });
+      if(state.cls.length>12)clsPreview.push(h('span',{style:{fontSize:'10px',color:'var(--tx3)',margin:'2px'}},'+' +(state.cls.length-12)+' mais'));
+
+      // Sports preview
+      var sptPreview=state.spt.map(function(sp){
+        return h('span',{style:{display:'inline-block',background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.25)',borderRadius:'4px',padding:'2px 7px',fontSize:'10px',color:'var(--gn)',margin:'2px'}},sp.nm);
+      });
+
+      // Locations preview
+      var locsPreview=state.locs.slice(0,8).map(function(l){
+        return h('span',{style:{display:'inline-block',background:'rgba(251,191,36,.1)',border:'1px solid rgba(251,191,36,.25)',borderRadius:'4px',padding:'2px 7px',fontSize:'10px',color:'var(--am)',margin:'2px'}},l.nm);
+      });
+      if(state.locs.length>8)locsPreview.push(h('span',{style:{fontSize:'10px',color:'var(--tx3)',margin:'2px'}},'+' +(state.locs.length-8)+' mais'));
+
+      ov.appendChild(h('div',{'class':'md',style:{maxWidth:'620px'}},
+        h('div',{'class':'md-h'},
+          h('div',{'class':'md-t'},'✅ Preview — Dados Importados'),
+          h('button',{'class':'btn btn-s',onclick:close},'✕')
+        ),
+        h('div',{'class':'md-b'},
+          h('div',{style:{fontSize:'12px',color:'var(--gn)',marginBottom:'12px'}},
+            '✅ Dashboard HTML lido com sucesso. Revise os dados antes de criar a escola.'),
+          // Stats row
+          h('div',{style:{display:'flex',gap:'8px',marginBottom:'14px',flexWrap:'wrap'}},
+            statCard('🏫','Turmas',''+state.cls.length,'var(--pu)'),
+            statCard('🏅','Esportes',''+state.spt.length,'var(--gn)'),
+            statCard('📍','Locais',''+state.locs.length,'var(--am)'),
+            statCard('📅','Jogos',''+p.totalJogos,'var(--cy)')
+          ),
+          // Turmas
+          h('div',{style:{marginBottom:'12px'}},
+            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--pu)',marginBottom:'4px'}},'Turmas detectadas'),
+            h('div',{},clsPreview)
+          ),
+          // Sports
+          h('div',{style:{marginBottom:'12px'}},
+            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--gn)',marginBottom:'4px'}},'Esportes'),
+            h('div',{},sptPreview)
+          ),
+          // Locations
+          h('div',{style:{marginBottom:'12px'}},
+            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--am)',marginBottom:'4px'}},'Locais'),
+            h('div',{},locsPreview)
+          ),
+          h('div',{style:{background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.2)',borderRadius:'6px',padding:'8px 12px',fontSize:'11px',color:'var(--am)'}},
+            '⚠️ Os agendamentos serão salvos internamente. As regras de pontuação podem ser ajustadas no painel admin da escola após a criação.'
+          )
+        ),
+        h('div',{'class':'md-f'},
+          h('button',{'class':'btn',onclick:function(){step='form';jimParsed=null;renderStep()}},'← Voltar'),
+          h('button',{'class':'btn',onclick:function(){jimParsed=null;doCreate(null)}},'Criar sem importar'),
+          h('button',{'class':'btn btn-p',onclick:function(){doCreate(state)}},'🚀 Criar Escola com dados')
+        )
+      ));
+    }
+  }
+
+  renderStep();
   root.appendChild(ov);
 }
 
