@@ -794,7 +794,7 @@ function _buildJimRows(rows){
           var t2=turmasSet[(m.e2||'').toUpperCase()];
           var t1id=t1?t1.id:(isPH(m.e1)?'PH_'+u():'PH_'+u());
           var t2id=t2?t2.id:(isPH(m.e2)?'PH_'+u():'PH_'+u());
-          return{id:u(),r:i+1,t1:t1id,t2:t2id,s1:null,s2:null,w:null,dt:'',lc:m.local||'',is3rd:faseNum===3&&(m.fase.indexOf('3º')>=0||m.fase.indexOf('3o')>=0),_hora:m.hora||''};
+          return{id:u(),r:i+1,t1:t1id,t2:t2id,s1:null,s2:null,w:null,dt:'',lc:m.local||'',is3rd:fn===3&&(m.fase.indexOf('3º')>=0||m.fase.indexOf('3o')>=0),_hora:m.hora||''};
         })};
       })
     };
