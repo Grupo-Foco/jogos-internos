@@ -723,7 +723,19 @@ function parseJimHtmlForBrackets(htmlText){
 }
 function _buildJimRows(rows){
   function u(){return Math.random().toString(36).slice(2,9)}
-  function isPH(e){return!e||['LUGAR','VENC','A DEFINIR','BYE'].some(function(p){return(e+'').toUpperCase().indexOf(p)>=0})}
+  function isPH(e){
+  if(!e)return true;
+  var u=(e+'').toUpperCase().trim();
+  // Explicit placeholders
+  if(['LUGAR','VENC','A DEFINIR','BYE','PERD','W_','L_'].some(function(p){return u.indexOf(p)>=0}))return true;
+  // Single-word series like "6° ANO" without color suffix = incomplete team name from semifinal headers
+  // A real team has format "Xº ANO COR" — if it matches "Xo ANO" exactly (no color word after), it's a placeholder
+  var COLORS=['AZUL','VERDE','VERMELHO','AMARELO','ROXO','ROSA','PRETO','BRANCO','CINZA','LARANJA','AZUL-CLARO'];
+  var hasColor=COLORS.some(function(c){return u.indexOf(c)>=0});
+  // If it looks like "6° ANO" / "6º ANO" exactly without a color → placeholder
+  if(/^\d+[ºo°]?\s*ANO\s*$/.test(u))return true;
+  return false;
+}
   function nm(m){var s=(m+'').toUpperCase().trim();var g='Misto';if(s.indexOf('MASC')>=0)g='Masculino';else if(s.indexOf('FEM')>=0)g='Feminino';return{base:s.replace(/\s*(MASC|FEM|MISTO|MASCULINO|FEMININO)\b/gi,'').trim(),gender:g,full:(m+'').trim()}}
   var ss={},ls={},ts={};
   rows.forEach(function(r){
@@ -751,11 +763,32 @@ function _buildJimRows(rows){
 }
 function jimBracketDataToSchoolState(parsed,adminPass,year){
   year=year||'Jogos 2026';function u(){return Math.random().toString(36).slice(2,9)}
-  var cls=parsed.turmas.map(function(t){return{id:t.id,nm:t.nm,yr:year,clr:''}});
+  var normYear=(year||'').replace(/[\u00b0\u00ba]/g,'\u00ba').replace(/\s+/g,' ').trim().toUpperCase();
+  var cls=parsed.turmas.map(function(t){return{id:t.id,nm:t.nm,yr:normYear,clr:''}}).sort(function(a,b){return a.nm.localeCompare(b.nm,'pt')});
   var spt=parsed.spt.map(function(sp){var cat=sp.gender&&sp.gender!=='Misto'?sp.gender:'Masculino';return{id:sp.id,nm:sp.base,gender:sp.gender,ct:[cat],mn:5,mx:15,dur:14,pts:{w:3,d:1,l:0,wo:0},tiebreaker:['gd','yc','rc','w'],tiebreakers:['goalDiff','yellowCards','redCards'],scoring:{}}});
+  // turma id -> turma name lookup
+  var tidToNm={};parsed.turmas.forEach(function(t){tidToNm[t.id]=t.nm});
+  // Build enrollments: one per (turma, sport, gender) pair that appears in a bracket match
   var es={};
-  Object.values(parsed.brackets).forEach(function(b){var si=b.sp.id,g=b.gender;b.rounds.forEach(function(rd){rd.m.forEach(function(m){[m.t1,m.t2].forEach(function(tid){if(tid&&tid.indexOf('PH_')!==0){var k=tid+'|'+si+'|'+g;if(!es[k])es[k]={id:u(),cls:tid,spt:si,ct:g,st:'approved'}}})})})});
-  var brk={};Object.values(parsed.brackets).forEach(function(b){var bk=year+'__'+b.sp.id;if(!brk[bk])brk[bk]={};brk[bk][b.gender]=b.rounds});
+  Object.values(parsed.brackets).forEach(function(b){
+    var spId=b.sp.id,g=b.gender;
+    b.rounds.forEach(function(rd){rd.m.forEach(function(m){
+      [m.t1,m.t2].forEach(function(tid){
+        if(tid&&tid.indexOf('PH_')!==0){
+          var k=tid+'|'+spId+'|'+g;
+          if(!es[k])es[k]={id:u(),ci:tid,si:spId,ct:g,st:'approved',tn:tidToNm[tid]||''};
+        }
+      });
+    })});
+  });
+  // Normalize year to uppercase for bracket key (must match S.bay = nrmYr(yr))
+  var normYear=(year||'').replace(/[\u00b0\u00ba]/g,'\u00ba').replace(/\s+/g,' ').trim().toUpperCase();
+  var brk={};
+  Object.values(parsed.brackets).forEach(function(b){
+    var bk=normYear+'__'+b.sp.id;
+    if(!brk[bk])brk[bk]={};
+    brk[bk][b.gender]=b.rounds;
+  });
   return{cls:cls,spt:spt,enr:Object.values(es),brk:brk,locs:parsed.locs,ev:{name:'Jogos Internos 2026'},logins:[],judgeLogins:[],recursos:[],adminPass:adminPass||'admin123',thirdPlace:{},appInfo:{author:'',contact:'',version:'3.0'}};
 }
 
@@ -1270,7 +1303,9 @@ function pC(c){
         h('td',{'data-label':'Turma',style:{fontWeight:'600'}},x.nm),
         h('td',{'data-label':'Ano'},x.yr||'—'),
         h('td',{'data-label':'Período'},h('span',{'class':'badge bc'},x.pr)),
-        h('td',{},h('button',{'class':'btn btn-s btn-r',onclick:(function(id,nm){return function(){
+        h('td',{style:{display:'flex',gap:'4px',justifyContent:'flex-end'}},
+          h('button',{'class':'btn btn-s',onclick:(function(turma){return function(){S.mod={tp:'editC',turma:turma};R()}})(x)},'✏️'),
+          h('button',{'class':'btn btn-s btn-r',onclick:(function(id,nm){return function(){
           if(!confirm('Remover turma "'+nm+'"?\n\nTodas as inscrições e chaveamentos desta turma serão removidos.'))return;
           // Remove enrollments linked to this turma
           var enrIds=S.enr.filter(function(e){return e.ci===id}).map(function(e){return e.id});
@@ -1298,6 +1333,27 @@ function pC(c){
     h('tbody',{},rows)
   ))));
 
+  if(S.mod&&S.mod.tp==='editC'){
+    var et=S.mod.turma;
+    modal(c,'Editar Turma',function(body,close){
+      var f={nm:et.nm,yr:et.yr||'',pr:et.pr||'Manha'};
+      var nmInp=h('input',{'class':'fi',value:f.nm,oninput:function(e){f.nm=e.target.value}});
+      var yrInp=h('input',{'class':'fi',value:f.yr,oninput:function(e){f.yr=e.target.value}});
+      body.appendChild(h('div',{'class':'fg'},h('label',{'class':'fl'},'Turma'),nmInp));
+      body.appendChild(h('div',{'class':'fr'},
+        h('div',{'class':'fg'},h('label',{'class':'fl'},'Ano (agrupamento)'),yrInp)
+      ));
+      return function(){
+        if(!f.nm.trim())return;
+        var oldNm=et.nm;
+        et.nm=uc(f.nm);et.yr=uc(f.yr)||et.yr;
+        // Update tn in enrollments that reference this turma
+        S.enr.forEach(function(e){if(e.ci===et.id&&(!e.tn||e.tn===oldNm))e.tn=et.nm});
+        logAudit('Edição de turma','Turma renomeada de "'+oldNm+'" para "'+et.nm+'"');
+        close();
+      };
+    });
+  }
   if(S.mod==='addC')modal(c,'Nova Turma',function(body,close){
     var f={nm:'',yr:'',pr:'Manhã'};
     body.appendChild(h('div',{'class':'fg'},h('label',{'class':'fl'},'Turma'),h('input',{'class':'fi',placeholder:'3º Ano A',oninput:function(e){f.nm=e.target.value}})));
