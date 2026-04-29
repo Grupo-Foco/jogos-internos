@@ -801,17 +801,235 @@ function jimDataToSchoolState(parsed, schoolAdminPass){
   };
 }
 
+// ── XLSX Bracket Parser (JIM tabela format) ──────────────────────────────────
+// Reads the "TABELA COMPLETA" sheet: JOGO|DIA|DIA SEMANA|HORÁRIO|LOCAL|SÉRIE|MODALIDADE|FASE|EQUIPE1|X|EQUIPE2
+function parseJimXlsx(wb){
+  if(!wb)return null;
+  // Try sheet named "TABELA COMPLETA" or "TABELA" or sheet1
+  var sheetNames=Object.keys(wb.Sheets||{});
+  var targetSheet=wb.Sheets['TABELA COMPLETA']||wb.Sheets['TABELA']||wb.Sheets[sheetNames[0]];
+  if(!targetSheet)return null;
+
+  var rows=[];
+  var range=targetSheet['!ref'];
+  if(!range)return null;
+  var parts=range.split(':');
+  var startRow=1, endRow=600;
+  if(parts[1]){var m=parts[1].match(/(\d+)/);if(m)endRow=parseInt(m[1])}
+
+  // Read headers from row 1
+  var headers={};
+  var cols='ABCDEFGHIJK'.split('');
+  cols.forEach(function(col){
+    var cell=targetSheet[col+'1'];
+    if(cell){
+      var v=(cell.v||'').toString().toUpperCase().replace(/[ÁÀÃÂ]/g,'A').replace(/[ÉÈÊ]/g,'E').replace(/[ÍÌÎ]/g,'I').replace(/[ÓÒÕÔ]/g,'O').replace(/[ÚÙÛ]/g,'U').trim();
+      headers[col]=v;
+    }
+  });
+
+  // Find column indices
+  var colMap={};
+  Object.entries(headers).forEach(function(e){
+    var col=e[0],hdr=e[1];
+    if(hdr.includes('JOGO'))colMap.jogo=col;
+    else if(hdr.includes('DIA')&&hdr.includes('SEM'))colMap.diaSem=col;
+    else if(hdr==='DIA')colMap.dia=col;
+    else if(hdr.includes('HOR'))colMap.hora=col;
+    else if(hdr.includes('LOCAL'))colMap.local=col;
+    else if(hdr.includes('SERIE')||hdr.includes('ANO'))colMap.serie=col;
+    else if(hdr.includes('MODAL'))colMap.modal=col;
+    else if(hdr.includes('FASE'))colMap.fase=col;
+    else if(hdr.includes('EQUIPE')&&!colMap.e1)colMap.e1=col;
+    else if(hdr.includes('EQUIPE')&&colMap.e1)colMap.e2=col;
+  });
+  // Fallback: positional (A=jogo,B=dia,C=diaSem,D=hora,E=local,F=serie,G=modal,H=fase,I=e1,K=e2)
+  if(!colMap.jogo)colMap.jogo='A';
+  if(!colMap.hora)colMap.hora='D';
+  if(!colMap.local)colMap.local='E';
+  if(!colMap.serie)colMap.serie='F';
+  if(!colMap.modal)colMap.modal='G';
+  if(!colMap.fase)colMap.fase='H';
+  if(!colMap.e1)colMap.e1='I';
+  if(!colMap.e2)colMap.e2='K';
+
+  function cv(col,row){var c=targetSheet[col+row];return c?(c.v||'').toString().trim():'';}
+
+  for(var r=2;r<=endRow;r++){
+    var e1=cv(colMap.e1,r);
+    var e2=cv(colMap.e2,r);
+    if(!e1&&!e2)continue;
+    rows.push({
+      jogo:cv(colMap.jogo,r),
+      hora:cv(colMap.hora,r),
+      local:cv(colMap.local,r),
+      serie:cv(colMap.serie,r),
+      modal:cv(colMap.modal,r),
+      fase:cv(colMap.fase,r),
+      e1:e1,
+      e2:e2
+    });
+  }
+  if(!rows.length)return null;
+  return _buildJimParsedFromRows(rows);
+}
+
+// ── HTML bracket parser wrapper ───────────────────────────────────────────────
+function parseJimHtmlForBrackets(htmlText){
+  var rawMatch=htmlText.match(/const RAW\s*=\s*(\[[\s\S]*?\]);/);
+  if(!rawMatch)return null;
+  var raw;
+  try{raw=JSON.parse(rawMatch[1])}catch(e){return null}
+  if(!Array.isArray(raw)||!raw.length)return null;
+  var rows=raw.map(function(r){
+    return{jogo:r[0],hora:r[2],local:r[3],serie:'',modal:r[4],fase:r[5],e1:r[7],e2:r[8]};
+  });
+  return _buildJimParsedFromRows(rows);
+}
+
+// ── Shared: build parsed object from normalized row array ─────────────────────
+function _buildJimParsedFromRows(rows){
+  function uid2(){return Math.random().toString(36).slice(2,9)}
+  function isPH(e){return!e||['LUGAR','VENC','A DEFINIR','BYE','W_','L_'].some(function(p){return e.toUpperCase().includes(p)})}
+  function normModal(m){
+    var s=m.toUpperCase().trim();
+    var gender='Misto';
+    if(s.includes('MASC'))gender='Masculino';
+    else if(s.includes('FEM'))gender='Feminino';
+    var base=s.replace(/\s*(MASC|FEM|MISTO|MASCULINO|FEMININO)\b/gi,'').trim();
+    return{base:base,gender:gender,full:m.trim()};
+  }
+
+  var sptSet={},locsSet={},turmasSet={};
+  rows.forEach(function(r){
+    if(r.local)locsSet[r.local.trim()]=true;
+    var nm=normModal(r.modal);
+    var key=nm.base+'|'+nm.gender;
+    if(!sptSet[key])sptSet[key]={base:nm.base,gender:nm.gender,full:nm.full,id:uid2()};
+    [r.e1,r.e2].forEach(function(e){
+      if(e&&!isPH(e)){
+        var ek=e.trim().toUpperCase();
+        if(!turmasSet[ek])turmasSet[ek]={nm:e.trim(),id:uid2()};
+      }
+    });
+  });
+
+  var spt=Object.values(sptSet);
+  var locs=Object.keys(locsSet).map(function(l){return{id:uid2(),nm:l}});
+  var turmas=Object.values(turmasSet);
+
+  // Group rows into brackets: key = sport+gender, value = {rounds structure}
+  // We build a custom bracket from the actual matchups in the data
+  var brkGroups={};
+  rows.forEach(function(r){
+    var nm=normModal(r.modal);
+    var spKey=nm.base+'|'+nm.gender;
+    var sp=sptSet[spKey];
+    if(!sp)return;
+    var bKey=sp.id+'|'+nm.gender;
+    if(!brkGroups[bKey])brkGroups[bKey]={sp:sp,gender:nm.gender,rounds:{},matchesByFase:{}};
+    var fase=(r.fase||'').toUpperCase().trim();
+    var faseNum=fase.includes('FINAL')&&!fase.includes('SEMI')&&!fase.includes('CLASSI')?3:fase.includes('SEMI')?2:1;
+    if(!brkGroups[bKey].matchesByFase[faseNum])brkGroups[bKey].matchesByFase[faseNum]=[];
+    brkGroups[bKey].matchesByFase[faseNum].push({
+      jogo:r.jogo,hora:r.hora,local:r.local,e1:r.e1.trim(),e2:r.e2.trim(),fase:fase,faseNum:faseNum
+    });
+  });
+
+  // Convert matchesByFase → rounds array compatible with S.brk
+  var brackets={}; // bKey -> rounds array
+  Object.entries(brkGroups).forEach(function(e){
+    var bKey=e[0],grp=e[1];
+    var fasenums=Object.keys(grp.matchesByFase).map(Number).sort();
+    var totalRounds=fasenums.length;
+    var rounds=fasenums.map(function(fn,idx){
+      var rn=idx+1;
+      var matches=grp.matchesByFase[fn].map(function(m){
+        var t1id=null,t2id=null;
+        if(!isPH(m.e1)){var t=turmasSet[m.e1.toUpperCase()];if(t)t1id=t.id;}
+        if(!isPH(m.e2)){var t=turmasSet[m.e2.toUpperCase()];if(t)t2id=t.id;}
+        return{
+          id:uid2(),r:rn,
+          t1:t1id||('PH_'+uid2()),
+          t2:t2id||('PH_'+uid2()),
+          s1:null,s2:null,w:null,
+          dt:'',lc:m.local||'',
+          is3rd:false,
+          _hora:m.hora||''
+        };
+      });
+      return{r:rn,m:matches};
+    });
+    brackets[bKey]={sp:grp.sp,gender:grp.gender,rounds:rounds};
+  });
+
+  return{turmas:turmas,spt:spt,locs:locs,brackets:brackets,totalJogos:rows.length};
+}
+
+// ── Build full school state from bracket-parsed data ─────────────────────────
+function jimBracketDataToSchoolState(parsed, adminPass, year){
+  year=year||'Jogos 2026';
+  function uid2(){return Math.random().toString(36).slice(2,9)}
+
+  // Turmas → S.cls
+  var cls=parsed.turmas.map(function(t){
+    return{id:t.id,nm:t.nm,yr:year,clr:''};
+  });
+
+  // Sports → S.spt
+  var spt=parsed.spt.map(function(sp){
+    return{id:sp.id,nm:sp.base,gender:sp.gender,cats:[],pts:{w:3,d:1,l:0,wo:0},tiebreaker:['gd','yc','rc','w'],scoring:{}};
+  });
+
+  // Enrollments: for each turma that appears in a bracket, enroll in that sport
+  var enrSet={};
+  Object.values(parsed.brackets).forEach(function(bData){
+    var spId=bData.sp.id;
+    var gender=bData.gender;
+    bData.rounds.forEach(function(rd){
+      rd.m.forEach(function(m){
+        [m.t1,m.t2].forEach(function(tid){
+          if(tid&&tid.indexOf('PH_')!==0){
+            var key=tid+'|'+spId+'|'+gender;
+            if(!enrSet[key])enrSet[key]={id:uid2(),cls:tid,spt:spId,ct:gender,st:'approved'};
+          }
+        });
+      });
+    });
+  });
+  var enr=Object.values(enrSet);
+
+  // Build S.brk: key = year__sportId, subkey = gender → rounds
+  var brk={};
+  Object.values(parsed.brackets).forEach(function(bData){
+    var bkey=year+'__'+bData.sp.id;
+    if(!brk[bkey])brk[bkey]={};
+    brk[bkey][bData.gender]=bData.rounds;
+  });
+
+  // Locations
+  var locs=parsed.locs;
+
+  return{
+    cls:cls,spt:spt,enr:enr,brk:brk,locs:locs,
+    ev:{name:'Jogos Internos 2026'},
+    logins:[],judgeLogins:[],recursos:[],
+    adminPass:adminPass||'admin123',
+    thirdPlace:{},
+    appInfo:{author:'',contact:'',version:'3.0'}
+  };
+}
+
 function mAddSchool(root){
   var f={name:'',code:'',city:'',contact:'',adminPass:'admin123'};
-  // Step: 'form' | 'import-preview'
   var step='form';
-  var jimParsed=null; // parsed dashboard data
+  var bracketParsed=null;
   var importErr='';
 
   var ov=h('div',{'class':'ov'});ov.onclick=function(e){if(e.target===ov){MT.mod=null;renderMasterPanel()}};
   var close=function(){MT.mod=null;renderMasterPanel()};
 
-  function doCreate(importedState){
+  function readFormFields(){
     f.name=(document.getElementById('mas-name')||{}).value||f.name;
     f.code=(document.getElementById('mas-code')||{}).value||f.code;
     f.city=(document.getElementById('mas-city')||{}).value||f.city;
@@ -820,10 +1038,14 @@ function mAddSchool(root){
     f.name=f.name.trim();
     f.code=f.code.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
     f.city=f.city.trim();f.contact=f.contact.trim();f.adminPass=f.adminPass.trim()||'admin123';
+  }
+
+  function doCreate(importedState){
+    readFormFields();
     var errDiv=document.getElementById('mas-err');
     if(!f.name){if(errDiv){errDiv.style.display='block';errDiv.textContent='Digite o nome.'}return}
-    if(!f.code||f.code.length<3){if(errDiv){errDiv.style.display='block';errDiv.textContent='Código deve ter pelo menos 3 caracteres.'}return}
-    if(MT.schools.find(function(s){return s.code===f.code})){if(errDiv){errDiv.style.display='block';errDiv.textContent='Código já existe.'}return}
+    if(!f.code||f.code.length<3){if(errDiv){errDiv.style.display='block';errDiv.textContent='Codigo deve ter pelo menos 3 caracteres.'}return}
+    if(MT.schools.find(function(s){return s.code===f.code})){if(errDiv){errDiv.style.display='block';errDiv.textContent='Codigo ja existe.'}return}
     MT.schools.push({id:uid(),code:f.code,name:f.name,city:f.city,contact:f.contact,adminPass:f.adminPass,status:'active',createdAt:new Date().toLocaleDateString('pt-BR')});
     var initialData=importedState||{cls:[],spt:[],enr:[],brk:{},locs:[],ev:{name:'Jogos Internos 2026'},logins:[],judgeLogins:[],recursos:[],adminPass:f.adminPass,thirdPlace:{},appInfo:{author:'',contact:'',version:'3.0'}};
     initialData.adminPass=f.adminPass;
@@ -837,59 +1059,83 @@ function mAddSchool(root){
     saveMasterData(function(){MT.mod=null;loadMasterData()});
   }
 
+  function handleFileUpload(file){
+    if(!file)return;
+    var ext=file.name.split('.').pop().toLowerCase();
+    if(ext==='html'){
+      var reader=new FileReader();
+      reader.onload=function(ev){
+        var parsed=parseJimHtmlForBrackets(ev.target.result);
+        if(!parsed||!Object.keys(parsed.brackets).length){
+          importErr='HTML nao reconhecido ou sem confrontos detectados.';
+          renderStep();return;
+        }
+        bracketParsed=parsed;importErr='';step='bracket-preview';renderStep();
+      };
+      reader.readAsText(file);
+    } else if(ext==='xlsx'||ext==='xls'){
+      var reader2=new FileReader();
+      reader2.onload=function(ev){
+        XLSXMini.read(ev.target.result).then(function(wb){
+          if(!wb){importErr='Nao foi possivel ler o XLSX.';renderStep();return}
+          var parsed=parseJimXlsx(wb);
+          if(!parsed||!Object.keys(parsed.brackets).length){
+            importErr='Planilha nao reconhecida. Verifique colunas EQUIPE 1, EQUIPE 2, MODALIDADE, FASE.';
+            renderStep();return;
+          }
+          bracketParsed=parsed;importErr='';step='bracket-preview';renderStep();
+        });
+      };
+      reader2.readAsArrayBuffer(file);
+    } else {
+      importErr='Formato nao suportado. Use .html ou .xlsx';
+      renderStep();
+    }
+  }
+
   function renderStep(){
-    // Remove existing modal content
     var existing=ov.querySelector('.md');
     if(existing)ov.removeChild(existing);
 
     if(step==='form'){
       var errDiv=h('div',{id:'mas-err',style:{display:'none',color:'#f87171',fontSize:'12px',marginBottom:'8px'}});
-      var nameInp=h('input',{id:'mas-name','class':'fi',placeholder:'Ex: Colégio Estadual XYZ',value:f.name,oninput:function(e){
+      var nameInp=h('input',{id:'mas-name','class':'fi',placeholder:'Ex: Colegio Estadual XYZ',value:f.name,oninput:function(e){
         f.name=e.target.value;
         var ci=document.getElementById('mas-code');
         if(ci&&!ci.value){var auto=f.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,20);ci.value=auto;f.code=auto;}
       }});
       var codeInp=h('input',{id:'mas-code','class':'fi',placeholder:'Ex: colegio-xyz',value:f.code,style:{fontFamily:'monospace'},oninput:function(e){f.code=e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,'')}});
-      var cityInp=h('input',{id:'mas-city','class':'fi',placeholder:'Ex: Goiânia - GO',value:f.city,oninput:function(e){f.city=e.target.value}});
+      var cityInp=h('input',{id:'mas-city','class':'fi',placeholder:'Ex: Goiania - GO',value:f.city,oninput:function(e){f.city=e.target.value}});
       var contactInp=h('input',{id:'mas-contact','class':'fi',placeholder:'Email ou telefone',value:f.contact,oninput:function(e){f.contact=e.target.value}});
       var passInp=h('input',{id:'mas-pass','class':'fi',value:f.adminPass,oninput:function(e){f.adminPass=e.target.value}});
 
-      // ── HTML Import section ──
       var importErrDiv=h('div',{style:{display:importErr?'block':'none',color:'#f87171',fontSize:'11px',margin:'6px 0 0'}},importErr);
-      var htmlInp=h('input',{type:'file',accept:'.html',style:{display:'none'}});
-      htmlInp.onchange=function(e){
-        var file=e.target.files[0];if(!file)return;
-        var reader=new FileReader();
-        reader.onload=function(ev){
-          var parsed=parseJimDashboardHtml(ev.target.result);
-          if(!parsed){importErr='Arquivo não reconhecido. Verifique se é um dashboard JIM válido.';importErrDiv.style.display='block';return}
-          jimParsed=parsed;
-          importErr='';
-          step='import-preview';
-          renderStep();
-        };
-        reader.readAsText(file);
-      };
+      var fileInp=h('input',{type:'file',accept:'.html,.xlsx,.xls',style:{display:'none'}});
+      fileInp.onchange=function(e){readFormFields();handleFileUpload(e.target.files[0])};
 
-      var importBox=h('div',{style:{background:'rgba(139,92,246,.08)',border:'1px solid rgba(139,92,246,.25)',borderRadius:'8px',padding:'12px 14px',marginTop:'14px'}},
-        h('div',{style:{fontWeight:'600',fontSize:'12px',color:'var(--pu)',marginBottom:'6px'}},'🗂️ Importar dados iniciais (opcional)'),
+      var dz=h('div',{style:{border:'2px dashed rgba(139,92,246,.35)',borderRadius:'8px',padding:'16px',textAlign:'center',cursor:'pointer',marginTop:'10px',transition:'border-color .2s',background:'rgba(139,92,246,.04)'}});
+      dz.onclick=function(){fileInp.click()};
+      dz.ondragover=function(e){e.preventDefault();dz.style.borderColor='var(--pu)'};
+      dz.ondragleave=function(){dz.style.borderColor='rgba(139,92,246,.35)'};
+      dz.ondrop=function(e){e.preventDefault();dz.style.borderColor='rgba(139,92,246,.35)';readFormFields();handleFileUpload(e.dataTransfer.files[0])};
+      dz.appendChild(h('div',{style:{fontSize:'28px',marginBottom:'6px'}},'\u26A4'));
+      dz.appendChild(h('div',{style:{fontWeight:'600',fontSize:'13px',color:'var(--pu)'}},'Importar Confrontos'));
+      dz.appendChild(h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'4px'}},'Arraste ou clique \u00b7 .html ou .xlsx'));
+
+      var importBox=h('div',{style:{background:'rgba(139,92,246,.06)',border:'1px solid rgba(139,92,246,.2)',borderRadius:'8px',padding:'12px 14px',marginTop:'14px'}},
+        h('div',{style:{fontWeight:'600',fontSize:'12px',color:'var(--pu)',marginBottom:'4px'}},'\uD83C\uDFC6 Confrontos & Chaveamentos (opcional)'),
         h('div',{style:{fontSize:'11px',color:'var(--tx2)',marginBottom:'10px',lineHeight:'1.6'}},
-          'Importe um dashboard HTML (formato JIM) para popular a escola com turmas, esportes, locais e agendamentos automaticamente.'
-        ),
-        h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap'}},
-          h('button',{'class':'btn btn-s',style:{background:'rgba(139,92,246,.15)',color:'var(--pu)',border:'1px solid rgba(139,92,246,.3)'},onclick:function(){htmlInp.click()}},'📊 Upload Dashboard HTML'),
-          h('div',{style:{fontSize:'10px',color:'var(--tx3)',alignSelf:'center',fontStyle:'italic'}},'Formatos XLSX e DOCX disponíveis no painel admin da escola')
-        ),
-        importErrDiv
+          'Suba o dashboard HTML ou planilha XLSX para criar turmas, esportes, locais e chaveamentos prontos para resultados.'),
+        dz,importErrDiv,fileInp
       );
 
       ov.appendChild(h('div',{'class':'md'},
-        h('div',{'class':'md-h'},h('div',{'class':'md-t'},'🏫 Nova Escola'),h('button',{'class':'btn btn-s',onclick:close},'✕')),
+        h('div',{'class':'md-h'},h('div',{'class':'md-t'},'\uD83C\uDFEB Nova Escola'),h('button',{'class':'btn btn-s',onclick:close},'\u2715')),
         h('div',{'class':'md-b'},
           errDiv,
           h('div',{'class':'fg'},h('label',{'class':'fl'},'Nome da Escola'),nameInp),
           h('div',{'class':'fr'},
-            h('div',{'class':'fg'},h('label',{'class':'fl'},'Código (URL)'),codeInp),
+            h('div',{'class':'fg'},h('label',{'class':'fl'},'Codigo (URL)'),codeInp),
             h('div',{'class':'fg'},h('label',{'class':'fl'},'Cidade / Estado'),cityInp)
           ),
           h('div',{'class':'fr'},
@@ -897,91 +1143,88 @@ function mAddSchool(root){
             h('div',{'class':'fg'},h('label',{'class':'fl'},'Senha Admin'),passInp)
           ),
           h('div',{style:{fontSize:'11px',color:'var(--tx3)',lineHeight:'1.6',marginTop:'4px'}},
-            '💡 URL: ?escola='+(f.code||'codigo')+'  ·  Login admin / '+(f.adminPass||'admin123')),
-          importBox,
-          htmlInp
+            '\uD83D\uDCA1 URL: ?escola='+(f.code||'codigo')+'  \u00b7  Login: admin / '+(f.adminPass||'admin123')),
+          importBox
         ),
         h('div',{'class':'md-f'},
           h('button',{'class':'btn',onclick:close},'Cancelar'),
-          h('button',{'class':'btn btn-p',onclick:function(){
-            f.name=(document.getElementById('mas-name')||{}).value||'';
-            f.code=(document.getElementById('mas-code')||{}).value||'';
-            f.city=(document.getElementById('mas-city')||{}).value||'';
-            f.contact=(document.getElementById('mas-contact')||{}).value||'';
-            f.adminPass=(document.getElementById('mas-pass')||{}).value||'admin123';
-            doCreate(null);
-          }},'Criar Escola (sem importar)')
+          h('button',{'class':'btn btn-p',onclick:function(){readFormFields();doCreate(null)}},'Criar Escola (sem importar)')
         )
       ));
 
-    } else if(step==='import-preview'){
-      // Preview screen
-      var p=jimParsed;
-      var state=jimDataToSchoolState(p, f.adminPass);
+    } else if(step==='bracket-preview'){
+      var p=bracketParsed;
+      var brkKeys=Object.keys(p.brackets);
+      var totalConf=0;
+      brkKeys.forEach(function(k){p.brackets[k].rounds.forEach(function(rd){totalConf+=rd.m.length})});
 
-      // Summary cards
       function statCard(icon,label,val,clr){
         return h('div',{style:{background:'var(--c2)',border:'1px solid var(--br)',borderRadius:'8px',padding:'10px 14px',flex:'1',minWidth:'80px',textAlign:'center'}},
-          h('div',{style:{fontSize:'20px'}},''+val),
+          h('div',{style:{fontSize:'20px',fontWeight:'700'}},''+val),
           h('div',{style:{fontSize:'10px',color:clr||'var(--tx2)',marginTop:'2px'}},icon+' '+label)
         );
       }
 
-      // Turmas preview (first 12)
-      var clsPreview=state.cls.slice(0,12).map(function(c){
-        return h('span',{style:{display:'inline-block',background:'rgba(139,92,246,.12)',border:'1px solid rgba(139,92,246,.25)',borderRadius:'4px',padding:'2px 7px',fontSize:'10px',color:'var(--pu)',margin:'2px'}},c.nm);
+      var sptRows=brkKeys.map(function(k){
+        var bd=p.brackets[k];
+        var sp=p.spt.find(function(s){return s.id===bd.sp.id});
+        var total=bd.rounds.length;
+        var phases=bd.rounds.map(function(rd,i){
+          var d=total-1-i;
+          var lbl=d===0?'Final':d===1?'Semi':d===2?'Quartas':'Fase '+(i+1);
+          return lbl+'('+rd.m.length+'j)';
+        }).join(' > ');
+        return h('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'5px 0',borderBottom:'1px solid var(--br)'}},
+          h('span',{style:{background:'rgba(139,92,246,.12)',borderRadius:'4px',padding:'2px 6px',fontSize:'10px',color:'var(--pu)',minWidth:'90px',flexShrink:'0'}},sp?sp.base:'?'),
+          h('span',{style:{fontSize:'10px',color:'var(--tx2)',width:'70px',flexShrink:'0'}},bd.gender),
+          h('span',{style:{fontSize:'10px',color:'var(--tx3)'}},phases)
+        );
       });
-      if(state.cls.length>12)clsPreview.push(h('span',{style:{fontSize:'10px',color:'var(--tx3)',margin:'2px'}},'+' +(state.cls.length-12)+' mais'));
 
-      // Sports preview
-      var sptPreview=state.spt.map(function(sp){
-        return h('span',{style:{display:'inline-block',background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.25)',borderRadius:'4px',padding:'2px 7px',fontSize:'10px',color:'var(--gn)',margin:'2px'}},sp.nm);
+      var turmaTags=p.turmas.slice(0,18).map(function(t){
+        return h('span',{style:{display:'inline-block',background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.25)',borderRadius:'4px',padding:'2px 7px',fontSize:'10px',color:'var(--gn)',margin:'2px'}},t.nm);
       });
+      if(p.turmas.length>18)turmaTags.push(h('span',{style:{fontSize:'10px',color:'var(--tx3)',margin:'2px'}},'+' +(p.turmas.length-18)+' mais'));
 
-      // Locations preview
-      var locsPreview=state.locs.slice(0,8).map(function(l){
+      var locTags=p.locs.map(function(l){
         return h('span',{style:{display:'inline-block',background:'rgba(251,191,36,.1)',border:'1px solid rgba(251,191,36,.25)',borderRadius:'4px',padding:'2px 7px',fontSize:'10px',color:'var(--am)',margin:'2px'}},l.nm);
       });
-      if(state.locs.length>8)locsPreview.push(h('span',{style:{fontSize:'10px',color:'var(--tx3)',margin:'2px'}},'+' +(state.locs.length-8)+' mais'));
 
-      ov.appendChild(h('div',{'class':'md',style:{maxWidth:'620px'}},
+      ov.appendChild(h('div',{'class':'md',style:{maxWidth:'640px'}},
         h('div',{'class':'md-h'},
-          h('div',{'class':'md-t'},'✅ Preview — Dados Importados'),
-          h('button',{'class':'btn btn-s',onclick:close},'✕')
+          h('div',{'class':'md-t'},'\u2705 Confrontos Detectados'),
+          h('button',{'class':'btn btn-s',onclick:close},'\u2715')
         ),
         h('div',{'class':'md-b'},
-          h('div',{style:{fontSize:'12px',color:'var(--gn)',marginBottom:'12px'}},
-            '✅ Dashboard HTML lido com sucesso. Revise os dados antes de criar a escola.'),
-          // Stats row
+          h('div',{style:{fontSize:'12px',color:'var(--gn)',marginBottom:'12px'}},'\u2705 Arquivo lido! Confirme antes de criar a escola.'),
           h('div',{style:{display:'flex',gap:'8px',marginBottom:'14px',flexWrap:'wrap'}},
-            statCard('🏫','Turmas',''+state.cls.length,'var(--pu)'),
-            statCard('🏅','Esportes',''+state.spt.length,'var(--gn)'),
-            statCard('📍','Locais',''+state.locs.length,'var(--am)'),
-            statCard('📅','Jogos',''+p.totalJogos,'var(--cy)')
+            statCard('\uD83C\uDFEB','Turmas',''+p.turmas.length,'var(--gn)'),
+            statCard('\uD83C\uDFC5','Esportes',''+p.spt.length,'var(--pu)'),
+            statCard('\uD83D\uDCCD','Locais',''+p.locs.length,'var(--am)'),
+            statCard('\u2694\uFE0F','Confrontos',''+totalConf,'var(--cy)')
           ),
-          // Turmas
           h('div',{style:{marginBottom:'12px'}},
-            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--pu)',marginBottom:'4px'}},'Turmas detectadas'),
-            h('div',{},clsPreview)
+            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--pu)',marginBottom:'6px'}},'Modalidades e fases detectadas'),
+            h('div',{style:{maxHeight:'180px',overflowY:'auto'}},sptRows)
           ),
-          // Sports
-          h('div',{style:{marginBottom:'12px'}},
-            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--gn)',marginBottom:'4px'}},'Esportes'),
-            h('div',{},sptPreview)
+          h('div',{style:{marginBottom:'10px'}},
+            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--gn)',marginBottom:'4px'}},'Turmas ('+p.turmas.length+')'),
+            h('div',{},turmaTags)
           ),
-          // Locations
-          h('div',{style:{marginBottom:'12px'}},
-            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--am)',marginBottom:'4px'}},'Locais'),
-            h('div',{},locsPreview)
-          ),
+          p.locs.length?h('div',{style:{marginBottom:'10px'}},
+            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--am)',marginBottom:'4px'}},'Locais detectados'),
+            h('div',{},locTags)
+          ):h('div',{}),
           h('div',{style:{background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.2)',borderRadius:'6px',padding:'8px 12px',fontSize:'11px',color:'var(--am)'}},
-            '⚠️ Os agendamentos serão salvos internamente. As regras de pontuação podem ser ajustadas no painel admin da escola após a criação.'
-          )
+            '\u26A0\uFE0F Chaveamentos criados prontos para resultados. Pontuacao ajustavel no painel admin.')
         ),
         h('div',{'class':'md-f'},
-          h('button',{'class':'btn',onclick:function(){step='form';jimParsed=null;renderStep()}},'← Voltar'),
-          h('button',{'class':'btn',onclick:function(){jimParsed=null;doCreate(null)}},'Criar sem importar'),
-          h('button',{'class':'btn btn-p',onclick:function(){doCreate(state)}},'🚀 Criar Escola com dados')
+          h('button',{'class':'btn',onclick:function(){step='form';bracketParsed=null;renderStep()}},'\u2190 Voltar'),
+          h('button',{'class':'btn',onclick:function(){bracketParsed=null;doCreate(null)}},'Criar sem importar'),
+          h('button',{'class':'btn btn-p',onclick:function(){
+            var state=jimBracketDataToSchoolState(bracketParsed,f.adminPass,'Jogos 2026');
+            doCreate(state);
+          }},'\uD83D\uDE80 Criar com Confrontos')
         )
       ));
     }
@@ -1668,10 +1911,20 @@ function pB(c){
   if(cats.length>1){var t2=h('div',{'class':'tabs',style:{marginBottom:'0'}});cats.forEach(function(ct){t2.appendChild(h('button',{'class':'tab'+(S.bc===ct?' active':''),onclick:(function(c2){return function(){S.bc=c2;R()}})(ct)},ct))});bar.appendChild(t2)}
 
   if(S.role==='admin'&&tms.length>=2){
-    bar.appendChild(h('button',{'class':'btn btn-p',onclick:function(){
-      if(!S.brk[bkey])S.brk[bkey]={};
-      S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),has3rd);R();
-    }},'🎲 Sortear'));
+    var hasExisting=!!(S.brk[bkey]&&S.brk[bkey][S.bc]&&S.brk[bkey][S.bc].length);
+    bar.appendChild(h('button',{'class':'btn btn-p',
+      title:hasExisting?'⚠️ Já existe chaveamento — clique para substituir':'Gerar chaveamento aleatório',
+      style:hasExisting?{background:'linear-gradient(135deg,#b45309,#92400e)',boxShadow:'0 0 0 2px #fbbf24'}:{},
+      onclick:function(){
+        if(hasExisting){
+          if(!confirm('⚠️ Atenção!\n\nJá existe um chaveamento para este esporte/categoria com resultados ou confrontos definidos.\n\nSortear novamente irá APAGAR todos os confrontos e resultados existentes.\n\nDeseja continuar?'))return;
+          if(!confirm('Segunda confirmação:\n\nTem certeza? Esta ação não pode ser desfeita.\n\nClique OK para apagar e gerar um novo sorteio.'))return;
+        }
+        if(!S.brk[bkey])S.brk[bkey]={};
+        S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),has3rd);
+        scheduleSave();R();
+      }
+    },hasExisting?'⚠️ Resortear':'🎲 Sortear'));
   }
 
   // 3rd place toggle
