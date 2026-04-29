@@ -744,7 +744,7 @@ function _buildJimRows(rows){
   Object.entries(bg).forEach(function(e){
     var bk=e[0],g=e[1];var fns=Object.keys(g.mf).map(Number).sort();
     br[bk]={sp:g.sp,gender:g.gender,rounds:fns.map(function(fn,i){
-      return{r:i+1,m:g.mf[fn].map(function(m){var t1=ts[(m.e1||'').toUpperCase()],t2=ts[(m.e2||'').toUpperCase()];return{id:u(),r:i+1,t1:t1?t1.id:'PH_'+u(),t2:t2?t2.id:'PH_'+u(),s1:null,s2:null,w:null,dt:'',lc:m.local||'',is3rd:false,_hora:m.hora||''}}};
+      return{r:i+1,m:g.mf[fn].map(function(m){var t1=ts[(m.e1||'').toUpperCase()],t2=ts[(m.e2||'').toUpperCase()];return{id:u(),r:i+1,t1:t1?t1.id:'PH_'+u(),t2:t2?t2.id:'PH_'+u(),s1:null,s2:null,w:null,dt:'',lc:m.local||'',is3rd:false,_hora:m.hora||''}})}
     })};
   });
   return{turmas:Object.values(ts),spt:Object.values(ss),locs:Object.keys(ls).map(function(l){return{id:u(),nm:l}}),brackets:br,totalJogos:rows.length};
