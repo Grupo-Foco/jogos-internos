@@ -689,549 +689,165 @@ function renderMasterPanel(){
   if(MT.mod&&MT.mod.tp==='addSchool')mAddSchool(root);
 }
 
-// ── HTML Dashboard Parser (JIM format) ─────────────────────────────────────
-function parseJimDashboardHtml(htmlText){
-  // Extract RAW array from the dashboard HTML
-  var rawMatch=htmlText.match(/const RAW\s*=\s*(\[[\s\S]*?\]);/);
-  if(!rawMatch)return null;
-  var raw;
-  try{raw=JSON.parse(rawMatch[1])}catch(e){return null}
-  if(!Array.isArray(raw)||!raw.length)return null;
-
-  var COLORS=['AZUL','VERDE','VERMELHO','AMARELO','ROXO','ROSA','PRETO','BRANCO','CINZA','LARANJA'];
-  function getColor(e){for(var c of COLORS)if(e.includes(c))return c;return''}
-  function getSerie(e){for(var c of COLORS)if(e.endsWith(' '+c))return e.slice(0,-(c.length+1));return e}
-  function isPH(e){return['LUGAR','VENC'].some(function(p){return e.includes(p)})}
-  function uid2(){return Math.random().toString(36).slice(2,9)}
-
-  // Extract unique turmas (series), sports, locations
-  var turmasSet={}, sptSet={}, locsSet={};
-  raw.forEach(function(r){
-    [r[7],r[8]].forEach(function(e){
-      if(!isPH(e)){
-        var serie=getSerie(e), cor=getColor(e);
-        var key=serie+'|'+cor;
-        if(!turmasSet[key])turmasSet[key]={serie:serie,cor:cor};
-      }
-    });
-    sptSet[r[4]]=true;
-    locsSet[r[3]]=true;
-  });
-
-  // Build turmas list — map "8º ANO ROXO" → turma object compatible with S.cls
-  var cls=Object.values(turmasSet).map(function(t){
-    return{id:uid2(),nm:t.serie+(t.cor?' '+t.cor:''),yr:t.serie,clr:t.cor||'',src:'jim'};
-  });
-
-  // Build sports list — parse "FUTEBOL MASC" → name + gender
-  var spt=Object.keys(sptSet).map(function(m){
-    var gender='Misto';
-    if(m.endsWith(' MASC'))gender='Masculino';
-    else if(m.endsWith(' FEM'))gender='Feminino';
-    var base=m.replace(/ (MASC|FEM|MISTO)$/,'');
-    return{id:uid2(),nm:base,gender:gender,fullNm:m,src:'jim'};
-  });
-
-  // Build locations list
-  var locs=Object.keys(locsSet).map(function(l){return{id:uid2(),nm:l}});
-
-  // Build schedule entries
-  var sched=raw.map(function(r){
-    var phaseNum=r[6]; // 1=RODÍZIO, 2=SEMIFINAL, 3=FINAL
-    var phaseLabel=r[5]; // "RODÍZIO", "SEMIFINAL", "FINAL X ANO", etc.
-    var dia=r[1]; // 11-15 (day numbers)
-    return{
-      id:uid2(),
-      jimId:r[0],
-      day:dia,
-      time:r[2],
-      local:r[3],
-      modalidade:r[4],
-      fase:phaseLabel,
-      faseNum:phaseNum,
-      e1:r[7],
-      e2:r[8],
-      sexo:r[9]
-    };
-  });
-
-  return{cls:cls,spt:spt,locs:locs,sched:sched,totalJogos:raw.length};
-}
-
-// ── Convert parsed JIM data into school's S-compatible format ───────────────
-function jimDataToSchoolState(parsed, schoolAdminPass){
-  // Map sports to S.spt format
-  var spt=parsed.spt.map(function(sp){
-    return{id:sp.id,nm:sp.fullNm,gender:sp.gender,cats:[],pts:{w:3,d:1,l:0,wo:0},tiebreaker:['gd','yc','rc','w'],scoring:{}};
-  });
-
-  // Map turmas to S.cls format
-  var cls=parsed.cls.map(function(c){
-    return{id:c.id,nm:c.nm,yr:c.yr,clr:c.clr};
-  });
-
-  // Map locations
-  var locs=parsed.locs.map(function(l){return{id:l.id,nm:l.nm}});
-
-  // Build enrollments: for each unique (turma, sport) pair found in schedule
-  var enrSet={};
-  parsed.sched.forEach(function(g){
-    var isPH=function(e){return['LUGAR','VENC'].some(function(p){return e.includes(p)})};
-    [g.e1,g.e2].forEach(function(team){
-      if(!isPH(team)){
-        var sp=parsed.spt.find(function(s){return s.fullNm===g.modalidade});
-        var cl=parsed.cls.find(function(c){return team.startsWith(c.serie)||team===c.nm});
-        if(sp&&cl){
-          var key=cl.id+'|'+sp.id;
-          if(!enrSet[key])enrSet[key]={id:Math.random().toString(36).slice(2,9),cls:cl.id,spt:sp.id,nm:team};
-        }
-      }
-    });
-  });
-  var enr=Object.values(enrSet);
-
-  return{
-    cls:cls,spt:spt,enr:enr,brk:{},locs:locs,
-    ev:{name:'Jogos Internos'},
-    logins:[],judgeLogins:[],recursos:[],
-    adminPass:schoolAdminPass,
-    thirdPlace:{},
-    appInfo:{author:'',contact:'',version:'3.0'},
-    _jimSched:parsed.sched // stored for future bracket/schedule generation
-  };
-}
-
-// ── XLSX Bracket Parser (JIM tabela format) ──────────────────────────────────
-// Reads the "TABELA COMPLETA" sheet: JOGO|DIA|DIA SEMANA|HORÁRIO|LOCAL|SÉRIE|MODALIDADE|FASE|EQUIPE1|X|EQUIPE2
+// -- XLSX Bracket Parser
 function parseJimXlsx(wb){
   if(!wb)return null;
-  // Try sheet named "TABELA COMPLETA" or "TABELA" or sheet1
-  var sheetNames=Object.keys(wb.Sheets||{});
-  var targetSheet=wb.Sheets['TABELA COMPLETA']||wb.Sheets['TABELA']||wb.Sheets[sheetNames[0]];
-  if(!targetSheet)return null;
-
-  var rows=[];
-  var range=targetSheet['!ref'];
-  if(!range)return null;
-  var parts=range.split(':');
-  var startRow=1, endRow=600;
-  if(parts[1]){var m=parts[1].match(/(\d+)/);if(m)endRow=parseInt(m[1])}
-
-  // Read headers from row 1
+  var sN=Object.keys(wb.Sheets||{});
+  var ts=wb.Sheets['TABELA COMPLETA']||wb.Sheets['TABELA']||wb.Sheets[sN[0]];
+  if(!ts)return null;
+  var range=ts['!ref'];if(!range)return null;
+  var parts=range.split(':');var endRow=600;
+  if(parts[1]){var m2=parts[1].match(/(\d+)/);if(m2)endRow=parseInt(m2[1])}
   var headers={};
-  var cols='ABCDEFGHIJK'.split('');
-  cols.forEach(function(col){
-    var cell=targetSheet[col+'1'];
-    if(cell){
-      var v=(cell.v||'').toString().toUpperCase().replace(/[ÁÀÃÂ]/g,'A').replace(/[ÉÈÊ]/g,'E').replace(/[ÍÌÎ]/g,'I').replace(/[ÓÒÕÔ]/g,'O').replace(/[ÚÙÛ]/g,'U').trim();
-      headers[col]=v;
-    }
+  'ABCDEFGHIJK'.split('').forEach(function(col){var cell=ts[col+'1'];if(cell){headers[col]=(cell.v||'').toString().toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim()}});
+  var cm={hora:'D',local:'E',modal:'G',fase:'H',e1:'I',e2:'K',_e1s:false};
+  Object.entries(headers).forEach(function(e){var c=e[0],h2=e[1];
+    if(h2.indexOf('HOR')>=0)cm.hora=c;
+    if(h2.indexOf('LOCAL')>=0)cm.local=c;
+    if(h2.indexOf('MODAL')>=0)cm.modal=c;
+    if(h2.indexOf('FASE')>=0)cm.fase=c;
+    if(h2.indexOf('EQUIPE')>=0&&!cm._e1s){cm.e1=c;cm._e1s=true}
+    else if(h2.indexOf('EQUIPE')>=0){cm.e2=c}
   });
-
-  // Find column indices
-  var colMap={};
-  Object.entries(headers).forEach(function(e){
-    var col=e[0],hdr=e[1];
-    if(hdr.includes('JOGO'))colMap.jogo=col;
-    else if(hdr.includes('DIA')&&hdr.includes('SEM'))colMap.diaSem=col;
-    else if(hdr==='DIA')colMap.dia=col;
-    else if(hdr.includes('HOR'))colMap.hora=col;
-    else if(hdr.includes('LOCAL'))colMap.local=col;
-    else if(hdr.includes('SERIE')||hdr.includes('ANO'))colMap.serie=col;
-    else if(hdr.includes('MODAL'))colMap.modal=col;
-    else if(hdr.includes('FASE'))colMap.fase=col;
-    else if(hdr.includes('EQUIPE')&&!colMap.e1)colMap.e1=col;
-    else if(hdr.includes('EQUIPE')&&colMap.e1)colMap.e2=col;
-  });
-  // Fallback: positional (A=jogo,B=dia,C=diaSem,D=hora,E=local,F=serie,G=modal,H=fase,I=e1,K=e2)
-  if(!colMap.jogo)colMap.jogo='A';
-  if(!colMap.hora)colMap.hora='D';
-  if(!colMap.local)colMap.local='E';
-  if(!colMap.serie)colMap.serie='F';
-  if(!colMap.modal)colMap.modal='G';
-  if(!colMap.fase)colMap.fase='H';
-  if(!colMap.e1)colMap.e1='I';
-  if(!colMap.e2)colMap.e2='K';
-
-  function cv(col,row){var c=targetSheet[col+row];return c?(c.v||'').toString().trim():'';}
-
-  for(var r=2;r<=endRow;r++){
-    var e1=cv(colMap.e1,r);
-    var e2=cv(colMap.e2,r);
-    if(!e1&&!e2)continue;
-    rows.push({
-      jogo:cv(colMap.jogo,r),
-      hora:cv(colMap.hora,r),
-      local:cv(colMap.local,r),
-      serie:cv(colMap.serie,r),
-      modal:cv(colMap.modal,r),
-      fase:cv(colMap.fase,r),
-      e1:e1,
-      e2:e2
-    });
-  }
+  function cv(col,row){var c=ts[col+row];return c?(c.v||'').toString().trim():''}
+  var rows=[];
+  for(var r=2;r<=endRow;r++){var e1=cv(cm.e1,r),e2=cv(cm.e2,r);if(!e1&&!e2)continue;rows.push({hora:cv(cm.hora,r),local:cv(cm.local,r),modal:cv(cm.modal,r),fase:cv(cm.fase,r),e1:e1,e2:e2})}
   if(!rows.length)return null;
-  return _buildJimParsedFromRows(rows);
+  return _buildJimRows(rows);
 }
-
-// ── HTML bracket parser wrapper ───────────────────────────────────────────────
 function parseJimHtmlForBrackets(htmlText){
   var rawMatch=htmlText.match(/const RAW\s*=\s*(\[[\s\S]*?\]);/);
-  if(!rawMatch)return null;
-  var raw;
-  try{raw=JSON.parse(rawMatch[1])}catch(e){return null}
+  if(!rawMatch)return null;var raw;try{raw=JSON.parse(rawMatch[1])}catch(e){return null}
   if(!Array.isArray(raw)||!raw.length)return null;
-  var rows=raw.map(function(r){
-    return{jogo:r[0],hora:r[2],local:r[3],serie:'',modal:r[4],fase:r[5],e1:r[7],e2:r[8]};
-  });
-  return _buildJimParsedFromRows(rows);
+  return _buildJimRows(raw.map(function(r){return{hora:r[2],local:r[3],modal:r[4],fase:r[5],e1:r[7],e2:r[8]}}));
 }
-
-// ── Shared: build parsed object from normalized row array ─────────────────────
-function _buildJimParsedFromRows(rows){
-  function uid2(){return Math.random().toString(36).slice(2,9)}
-  function isPH(e){return!e||['LUGAR','VENC','A DEFINIR','BYE','W_','L_'].some(function(p){return e.toUpperCase().includes(p)})}
-  function normModal(m){
-    var s=m.toUpperCase().trim();
-    var gender='Misto';
-    if(s.includes('MASC'))gender='Masculino';
-    else if(s.includes('FEM'))gender='Feminino';
-    var base=s.replace(/\s*(MASC|FEM|MISTO|MASCULINO|FEMININO)\b/gi,'').trim();
-    return{base:base,gender:gender,full:m.trim()};
-  }
-
-  var sptSet={},locsSet={},turmasSet={};
+function _buildJimRows(rows){
+  function u(){return Math.random().toString(36).slice(2,9)}
+  function isPH(e){return!e||['LUGAR','VENC','A DEFINIR','BYE'].some(function(p){return(e+'').toUpperCase().indexOf(p)>=0})}
+  function nm(m){var s=(m+'').toUpperCase().trim();var g='Misto';if(s.indexOf('MASC')>=0)g='Masculino';else if(s.indexOf('FEM')>=0)g='Feminino';return{base:s.replace(/\s*(MASC|FEM|MISTO|MASCULINO|FEMININO)\b/gi,'').trim(),gender:g,full:(m+'').trim()}}
+  var ss={},ls={},ts={};
   rows.forEach(function(r){
-    if(r.local)locsSet[r.local.trim()]=true;
-    var nm=normModal(r.modal);
-    var key=nm.base+'|'+nm.gender;
-    if(!sptSet[key])sptSet[key]={base:nm.base,gender:nm.gender,full:nm.full,id:uid2()};
-    [r.e1,r.e2].forEach(function(e){
-      if(e&&!isPH(e)){
-        var ek=e.trim().toUpperCase();
-        if(!turmasSet[ek])turmasSet[ek]={nm:e.trim(),id:uid2()};
-      }
-    });
+    if(r.local)ls[r.local.trim()]=true;
+    var n=nm(r.modal);var k=n.base+'|'+n.gender;if(!ss[k])ss[k]={base:n.base,gender:n.gender,full:n.full,id:u()};
+    [r.e1,r.e2].forEach(function(e){if(e&&!isPH(e)){var ek=(e+'').trim().toUpperCase();if(!ts[ek])ts[ek]={nm:(e+'').trim(),id:u()}}});
   });
-
-  var spt=Object.values(sptSet);
-  var locs=Object.keys(locsSet).map(function(l){return{id:uid2(),nm:l}});
-  var turmas=Object.values(turmasSet);
-
-  // Group rows into brackets: key = sport+gender, value = {rounds structure}
-  // We build a custom bracket from the actual matchups in the data
-  var brkGroups={};
+  var bg={};
   rows.forEach(function(r){
-    var nm=normModal(r.modal);
-    var spKey=nm.base+'|'+nm.gender;
-    var sp=sptSet[spKey];
-    if(!sp)return;
-    var bKey=sp.id+'|'+nm.gender;
-    if(!brkGroups[bKey])brkGroups[bKey]={sp:sp,gender:nm.gender,rounds:{},matchesByFase:{}};
-    var fase=(r.fase||'').toUpperCase().trim();
-    var faseNum=fase.includes('FINAL')&&!fase.includes('SEMI')&&!fase.includes('CLASSI')?3:fase.includes('SEMI')?2:1;
-    if(!brkGroups[bKey].matchesByFase[faseNum])brkGroups[bKey].matchesByFase[faseNum]=[];
-    brkGroups[bKey].matchesByFase[faseNum].push({
-      jogo:r.jogo,hora:r.hora,local:r.local,e1:r.e1.trim(),e2:r.e2.trim(),fase:fase,faseNum:faseNum
-    });
+    var n=nm(r.modal);var sp=ss[n.base+'|'+n.gender];if(!sp)return;
+    var bk=sp.id+'|'+n.gender;if(!bg[bk])bg[bk]={sp:sp,gender:n.gender,mf:{}};
+    var f2=(r.fase||'').toUpperCase().trim();
+    var fn=(!f2||f2.indexOf('CLASSI')>=0||f2.indexOf('ROD')>=0)?1:f2.indexOf('SEMI')>=0?2:3;
+    if(!bg[bk].mf[fn])bg[bk].mf[fn]=[];
+    bg[bk].mf[fn].push({hora:r.hora,local:r.local,e1:(r.e1+'').trim(),e2:(r.e2+'').trim()});
   });
-
-  // Convert matchesByFase → rounds array compatible with S.brk
-  var brackets={}; // bKey -> rounds array
-  Object.entries(brkGroups).forEach(function(e){
-    var bKey=e[0],grp=e[1];
-    var fasenums=Object.keys(grp.matchesByFase).map(Number).sort();
-    var totalRounds=fasenums.length;
-    var rounds=fasenums.map(function(fn,idx){
-      var rn=idx+1;
-      var matches=grp.matchesByFase[fn].map(function(m){
-        var t1id=null,t2id=null;
-        if(!isPH(m.e1)){var t=turmasSet[m.e1.toUpperCase()];if(t)t1id=t.id;}
-        if(!isPH(m.e2)){var t=turmasSet[m.e2.toUpperCase()];if(t)t2id=t.id;}
-        return{
-          id:uid2(),r:rn,
-          t1:t1id||('PH_'+uid2()),
-          t2:t2id||('PH_'+uid2()),
-          s1:null,s2:null,w:null,
-          dt:'',lc:m.local||'',
-          is3rd:false,
-          _hora:m.hora||''
-        };
-      });
-      return{r:rn,m:matches};
-    });
-    brackets[bKey]={sp:grp.sp,gender:grp.gender,rounds:rounds};
+  var br={};
+  Object.entries(bg).forEach(function(e){
+    var bk=e[0],g=e[1];var fns=Object.keys(g.mf).map(Number).sort();
+    br[bk]={sp:g.sp,gender:g.gender,rounds:fns.map(function(fn,i){
+      return{r:i+1,m:g.mf[fn].map(function(m){var t1=ts[(m.e1||'').toUpperCase()],t2=ts[(m.e2||'').toUpperCase()];return{id:u(),r:i+1,t1:t1?t1.id:'PH_'+u(),t2:t2?t2.id:'PH_'+u(),s1:null,s2:null,w:null,dt:'',lc:m.local||'',is3rd:false,_hora:m.hora||''}}};
+    })};
   });
-
-  return{turmas:turmas,spt:spt,locs:locs,brackets:brackets,totalJogos:rows.length};
+  return{turmas:Object.values(ts),spt:Object.values(ss),locs:Object.keys(ls).map(function(l){return{id:u(),nm:l}}),brackets:br,totalJogos:rows.length};
+}
+function jimBracketDataToSchoolState(parsed,adminPass,year){
+  year=year||'Jogos 2026';function u(){return Math.random().toString(36).slice(2,9)}
+  var cls=parsed.turmas.map(function(t){return{id:t.id,nm:t.nm,yr:year,clr:''}});
+  var spt=parsed.spt.map(function(sp){var cat=sp.gender&&sp.gender!=='Misto'?sp.gender:'Masculino';return{id:sp.id,nm:sp.base,gender:sp.gender,ct:[cat],mn:5,mx:15,dur:14,pts:{w:3,d:1,l:0,wo:0},tiebreaker:['gd','yc','rc','w'],tiebreakers:['goalDiff','yellowCards','redCards'],scoring:{}}});
+  var es={};
+  Object.values(parsed.brackets).forEach(function(b){var si=b.sp.id,g=b.gender;b.rounds.forEach(function(rd){rd.m.forEach(function(m){[m.t1,m.t2].forEach(function(tid){if(tid&&tid.indexOf('PH_')!==0){var k=tid+'|'+si+'|'+g;if(!es[k])es[k]={id:u(),cls:tid,spt:si,ct:g,st:'approved'}}})})})});
+  var brk={};Object.values(parsed.brackets).forEach(function(b){var bk=year+'__'+b.sp.id;if(!brk[bk])brk[bk]={};brk[bk][b.gender]=b.rounds});
+  return{cls:cls,spt:spt,enr:Object.values(es),brk:brk,locs:parsed.locs,ev:{name:'Jogos Internos 2026'},logins:[],judgeLogins:[],recursos:[],adminPass:adminPass||'admin123',thirdPlace:{},appInfo:{author:'',contact:'',version:'3.0'}};
 }
 
-// ── Build full school state from bracket-parsed data ─────────────────────────
-function jimBracketDataToSchoolState(parsed, adminPass, year){
-  year=year||'Jogos 2026';
-  function uid2(){return Math.random().toString(36).slice(2,9)}
-
-  // Turmas → S.cls
-  var cls=parsed.turmas.map(function(t){
-    return{id:t.id,nm:t.nm,yr:year,clr:''};
-  });
-
-  // Sports → S.spt
-  var spt=parsed.spt.map(function(sp){
-    return{id:sp.id,nm:sp.base,gender:sp.gender,cats:[],pts:{w:3,d:1,l:0,wo:0},tiebreaker:['gd','yc','rc','w'],scoring:{}};
-  });
-
-  // Enrollments: for each turma that appears in a bracket, enroll in that sport
-  var enrSet={};
-  Object.values(parsed.brackets).forEach(function(bData){
-    var spId=bData.sp.id;
-    var gender=bData.gender;
-    bData.rounds.forEach(function(rd){
-      rd.m.forEach(function(m){
-        [m.t1,m.t2].forEach(function(tid){
-          if(tid&&tid.indexOf('PH_')!==0){
-            var key=tid+'|'+spId+'|'+gender;
-            if(!enrSet[key])enrSet[key]={id:uid2(),cls:tid,spt:spId,ct:gender,st:'approved'};
-          }
-        });
-      });
-    });
-  });
-  var enr=Object.values(enrSet);
-
-  // Build S.brk: key = year__sportId, subkey = gender → rounds
-  var brk={};
-  Object.values(parsed.brackets).forEach(function(bData){
-    var bkey=year+'__'+bData.sp.id;
-    if(!brk[bkey])brk[bkey]={};
-    brk[bkey][bData.gender]=bData.rounds;
-  });
-
-  // Locations
-  var locs=parsed.locs;
-
-  return{
-    cls:cls,spt:spt,enr:enr,brk:brk,locs:locs,
-    ev:{name:'Jogos Internos 2026'},
-    logins:[],judgeLogins:[],recursos:[],
-    adminPass:adminPass||'admin123',
-    thirdPlace:{},
-    appInfo:{author:'',contact:'',version:'3.0'}
-  };
-}
 
 function mAddSchool(root){
   var f={name:'',code:'',city:'',contact:'',adminPass:'admin123'};
-  var step='form';
-  var bracketParsed=null;
-  var importErr='';
-
+  var step='form';var bracketParsed=null;var importErr='';
   var ov=h('div',{'class':'ov'});ov.onclick=function(e){if(e.target===ov){MT.mod=null;renderMasterPanel()}};
   var close=function(){MT.mod=null;renderMasterPanel()};
-
-  function readFormFields(){
+  function readF(){
     f.name=(document.getElementById('mas-name')||{}).value||f.name;
     f.code=(document.getElementById('mas-code')||{}).value||f.code;
     f.city=(document.getElementById('mas-city')||{}).value||f.city;
     f.contact=(document.getElementById('mas-contact')||{}).value||f.contact;
     f.adminPass=(document.getElementById('mas-pass')||{}).value||f.adminPass;
-    f.name=f.name.trim();
-    f.code=f.code.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
+    f.name=f.name.trim();f.code=f.code.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
     f.city=f.city.trim();f.contact=f.contact.trim();f.adminPass=f.adminPass.trim()||'admin123';
   }
-
   function doCreate(importedState){
-    readFormFields();
-    var errDiv=document.getElementById('mas-err');
+    readF();var errDiv=document.getElementById('mas-err');
     if(!f.name){if(errDiv){errDiv.style.display='block';errDiv.textContent='Digite o nome.'}return}
-    if(!f.code||f.code.length<3){if(errDiv){errDiv.style.display='block';errDiv.textContent='Codigo deve ter pelo menos 3 caracteres.'}return}
+    if(!f.code||f.code.length<3){if(errDiv){errDiv.style.display='block';errDiv.textContent='Codigo deve ter 3+ caracteres.'}return}
     if(MT.schools.find(function(s){return s.code===f.code})){if(errDiv){errDiv.style.display='block';errDiv.textContent='Codigo ja existe.'}return}
     MT.schools.push({id:uid(),code:f.code,name:f.name,city:f.city,contact:f.contact,adminPass:f.adminPass,status:'active',createdAt:new Date().toLocaleDateString('pt-BR')});
     var initialData=importedState||{cls:[],spt:[],enr:[],brk:{},locs:[],ev:{name:'Jogos Internos 2026'},logins:[],judgeLogins:[],recursos:[],adminPass:f.adminPass,thirdPlace:{},appInfo:{author:'',contact:'',version:'3.0'}};
     initialData.adminPass=f.adminPass;
-    if(S.sb.url&&S.sb.key){
-      fetch(S.sb.url+'/rest/v1/jogos_data',{
-        method:'POST',
-        headers:{'Content-Type':'application/json','apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key,'Prefer':'resolution=merge-duplicates'},
-        body:JSON.stringify({id:'escola_'+f.code,data:JSON.stringify(initialData),updated_at:new Date().toISOString()})
-      }).catch(function(e){console.error(e)});
-    }
+    if(S.sb.url&&S.sb.key){fetch(S.sb.url+'/rest/v1/jogos_data',{method:'POST',headers:{'Content-Type':'application/json','apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify({id:'escola_'+f.code,data:JSON.stringify(initialData),updated_at:new Date().toISOString()})}).catch(function(e){console.error(e)})}
     saveMasterData(function(){MT.mod=null;loadMasterData()});
   }
-
-  function handleFileUpload(file){
-    if(!file)return;
-    var ext=file.name.split('.').pop().toLowerCase();
-    if(ext==='html'){
-      var reader=new FileReader();
-      reader.onload=function(ev){
-        var parsed=parseJimHtmlForBrackets(ev.target.result);
-        if(!parsed||!Object.keys(parsed.brackets).length){
-          importErr='HTML nao reconhecido ou sem confrontos detectados.';
-          renderStep();return;
-        }
-        bracketParsed=parsed;importErr='';step='bracket-preview';renderStep();
-      };
-      reader.readAsText(file);
-    } else if(ext==='xlsx'||ext==='xls'){
-      var reader2=new FileReader();
-      reader2.onload=function(ev){
-        XLSXMini.read(ev.target.result).then(function(wb){
-          if(!wb){importErr='Nao foi possivel ler o XLSX.';renderStep();return}
-          var parsed=parseJimXlsx(wb);
-          if(!parsed||!Object.keys(parsed.brackets).length){
-            importErr='Planilha nao reconhecida. Verifique colunas EQUIPE 1, EQUIPE 2, MODALIDADE, FASE.';
-            renderStep();return;
-          }
-          bracketParsed=parsed;importErr='';step='bracket-preview';renderStep();
-        });
-      };
-      reader2.readAsArrayBuffer(file);
-    } else {
-      importErr='Formato nao suportado. Use .html ou .xlsx';
-      renderStep();
-    }
+  function handleFile(file){
+    if(!file)return;var ext=file.name.split('.').pop().toLowerCase();
+    if(ext==='html'){var r=new FileReader();r.onload=function(ev){var p=parseJimHtmlForBrackets(ev.target.result);if(!p||!Object.keys(p.brackets).length){importErr='HTML sem confrontos detectados.';renderStep();return}bracketParsed=p;importErr='';step='bracket-preview';renderStep()};r.readAsText(file)}
+    else if(ext==='xlsx'||ext==='xls'){var r2=new FileReader();r2.onload=function(ev){XLSXMini.read(ev.target.result).then(function(wb){if(!wb){importErr='Nao foi possivel ler o XLSX.';renderStep();return}var p=parseJimXlsx(wb);if(!p||!Object.keys(p.brackets).length){importErr='Planilha sem confrontos. Verifique colunas EQUIPE 1, EQUIPE 2, MODALIDADE, FASE.';renderStep();return}bracketParsed=p;importErr='';step='bracket-preview';renderStep()})};r2.readAsArrayBuffer(file)}
+    else{importErr='Use .html ou .xlsx';renderStep()}
   }
-
   function renderStep(){
-    var existing=ov.querySelector('.md');
-    if(existing)ov.removeChild(existing);
-
+    var ex=ov.querySelector('.md');if(ex)ov.removeChild(ex);
     if(step==='form'){
       var errDiv=h('div',{id:'mas-err',style:{display:'none',color:'#f87171',fontSize:'12px',marginBottom:'8px'}});
-      var nameInp=h('input',{id:'mas-name','class':'fi',placeholder:'Ex: Colegio Estadual XYZ',value:f.name,oninput:function(e){
-        f.name=e.target.value;
-        var ci=document.getElementById('mas-code');
-        if(ci&&!ci.value){var auto=f.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,20);ci.value=auto;f.code=auto;}
-      }});
+      var nameInp=h('input',{id:'mas-name','class':'fi',placeholder:'Ex: Colegio XYZ',value:f.name,oninput:function(e){f.name=e.target.value;var ci=document.getElementById('mas-code');if(ci&&!ci.value){var a=f.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,20);ci.value=a;f.code=a;}}});
       var codeInp=h('input',{id:'mas-code','class':'fi',placeholder:'Ex: colegio-xyz',value:f.code,style:{fontFamily:'monospace'},oninput:function(e){f.code=e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,'')}});
       var cityInp=h('input',{id:'mas-city','class':'fi',placeholder:'Ex: Goiania - GO',value:f.city,oninput:function(e){f.city=e.target.value}});
       var contactInp=h('input',{id:'mas-contact','class':'fi',placeholder:'Email ou telefone',value:f.contact,oninput:function(e){f.contact=e.target.value}});
       var passInp=h('input',{id:'mas-pass','class':'fi',value:f.adminPass,oninput:function(e){f.adminPass=e.target.value}});
-
-      var importErrDiv=h('div',{style:{display:importErr?'block':'none',color:'#f87171',fontSize:'11px',margin:'6px 0 0'}},importErr);
+      var ieDiv=h('div',{style:{display:importErr?'block':'none',color:'#f87171',fontSize:'11px',margin:'6px 0 0'}},importErr);
       var fileInp=h('input',{type:'file',accept:'.html,.xlsx,.xls',style:{display:'none'}});
-      fileInp.onchange=function(e){readFormFields();handleFileUpload(e.target.files[0])};
-
-      var dz=h('div',{style:{border:'2px dashed rgba(139,92,246,.35)',borderRadius:'8px',padding:'16px',textAlign:'center',cursor:'pointer',marginTop:'10px',transition:'border-color .2s',background:'rgba(139,92,246,.04)'}});
+      fileInp.onchange=function(e){readF();handleFile(e.target.files[0])};
+      var dz=h('div',{style:{border:'2px dashed rgba(139,92,246,.35)',borderRadius:'8px',padding:'18px',textAlign:'center',cursor:'pointer',background:'rgba(139,92,246,.04)'}});
       dz.onclick=function(){fileInp.click()};
       dz.ondragover=function(e){e.preventDefault();dz.style.borderColor='var(--pu)'};
       dz.ondragleave=function(){dz.style.borderColor='rgba(139,92,246,.35)'};
-      dz.ondrop=function(e){e.preventDefault();dz.style.borderColor='rgba(139,92,246,.35)';readFormFields();handleFileUpload(e.dataTransfer.files[0])};
-      dz.appendChild(h('div',{style:{fontSize:'28px',marginBottom:'6px'}},'\u26A4'));
+      dz.ondrop=function(e){e.preventDefault();dz.style.borderColor='rgba(139,92,246,.35)';readF();handleFile(e.dataTransfer.files[0])};
+      dz.appendChild(h('div',{style:{fontSize:'26px',marginBottom:'4px'}},'📊'));
       dz.appendChild(h('div',{style:{fontWeight:'600',fontSize:'13px',color:'var(--pu)'}},'Importar Confrontos'));
-      dz.appendChild(h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'4px'}},'Arraste ou clique \u00b7 .html ou .xlsx'));
-
+      dz.appendChild(h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'4px'}},'Arraste ou clique · .html ou .xlsx'));
       var importBox=h('div',{style:{background:'rgba(139,92,246,.06)',border:'1px solid rgba(139,92,246,.2)',borderRadius:'8px',padding:'12px 14px',marginTop:'14px'}},
-        h('div',{style:{fontWeight:'600',fontSize:'12px',color:'var(--pu)',marginBottom:'4px'}},'\uD83C\uDFC6 Confrontos & Chaveamentos (opcional)'),
-        h('div',{style:{fontSize:'11px',color:'var(--tx2)',marginBottom:'10px',lineHeight:'1.6'}},
-          'Suba o dashboard HTML ou planilha XLSX para criar turmas, esportes, locais e chaveamentos prontos para resultados.'),
-        dz,importErrDiv,fileInp
-      );
-
+        h('div',{style:{fontWeight:'600',fontSize:'12px',color:'var(--pu)',marginBottom:'4px'}},'🏆 Confrontos e Chaveamentos (opcional)'),
+        h('div',{style:{fontSize:'11px',color:'var(--tx2)',marginBottom:'10px',lineHeight:'1.6'}},'Suba o dashboard HTML ou planilha XLSX. Cria turmas, esportes, locais e confrontos prontos para resultados.'),
+        dz,ieDiv,fileInp);
       ov.appendChild(h('div',{'class':'md'},
-        h('div',{'class':'md-h'},h('div',{'class':'md-t'},'\uD83C\uDFEB Nova Escola'),h('button',{'class':'btn btn-s',onclick:close},'\u2715')),
-        h('div',{'class':'md-b'},
-          errDiv,
+        h('div',{'class':'md-h'},h('div',{'class':'md-t'},'🏫 Nova Escola'),h('button',{'class':'btn btn-s',onclick:close},'✕')),
+        h('div',{'class':'md-b'},errDiv,
           h('div',{'class':'fg'},h('label',{'class':'fl'},'Nome da Escola'),nameInp),
-          h('div',{'class':'fr'},
-            h('div',{'class':'fg'},h('label',{'class':'fl'},'Codigo (URL)'),codeInp),
-            h('div',{'class':'fg'},h('label',{'class':'fl'},'Cidade / Estado'),cityInp)
-          ),
-          h('div',{'class':'fr'},
-            h('div',{'class':'fg'},h('label',{'class':'fl'},'Contato'),contactInp),
-            h('div',{'class':'fg'},h('label',{'class':'fl'},'Senha Admin'),passInp)
-          ),
-          h('div',{style:{fontSize:'11px',color:'var(--tx3)',lineHeight:'1.6',marginTop:'4px'}},
-            '\uD83D\uDCA1 URL: ?escola='+(f.code||'codigo')+'  \u00b7  Login: admin / '+(f.adminPass||'admin123')),
-          importBox
-        ),
-        h('div',{'class':'md-f'},
-          h('button',{'class':'btn',onclick:close},'Cancelar'),
-          h('button',{'class':'btn btn-p',onclick:function(){readFormFields();doCreate(null)}},'Criar Escola (sem importar)')
-        )
-      ));
-
-    } else if(step==='bracket-preview'){
-      var p=bracketParsed;
-      var brkKeys=Object.keys(p.brackets);
-      var totalConf=0;
-      brkKeys.forEach(function(k){p.brackets[k].rounds.forEach(function(rd){totalConf+=rd.m.length})});
-
-      function statCard(icon,label,val,clr){
-        return h('div',{style:{background:'var(--c2)',border:'1px solid var(--br)',borderRadius:'8px',padding:'10px 14px',flex:'1',minWidth:'80px',textAlign:'center'}},
-          h('div',{style:{fontSize:'20px',fontWeight:'700'}},''+val),
-          h('div',{style:{fontSize:'10px',color:clr||'var(--tx2)',marginTop:'2px'}},icon+' '+label)
-        );
-      }
-
-      var sptRows=brkKeys.map(function(k){
-        var bd=p.brackets[k];
-        var sp=p.spt.find(function(s){return s.id===bd.sp.id});
-        var total=bd.rounds.length;
-        var phases=bd.rounds.map(function(rd,i){
-          var d=total-1-i;
-          var lbl=d===0?'Final':d===1?'Semi':d===2?'Quartas':'Fase '+(i+1);
-          return lbl+'('+rd.m.length+'j)';
-        }).join(' > ');
-        return h('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'5px 0',borderBottom:'1px solid var(--br)'}},
-          h('span',{style:{background:'rgba(139,92,246,.12)',borderRadius:'4px',padding:'2px 6px',fontSize:'10px',color:'var(--pu)',minWidth:'90px',flexShrink:'0'}},sp?sp.base:'?'),
-          h('span',{style:{fontSize:'10px',color:'var(--tx2)',width:'70px',flexShrink:'0'}},bd.gender),
-          h('span',{style:{fontSize:'10px',color:'var(--tx3)'}},phases)
-        );
-      });
-
-      var turmaTags=p.turmas.slice(0,18).map(function(t){
-        return h('span',{style:{display:'inline-block',background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.25)',borderRadius:'4px',padding:'2px 7px',fontSize:'10px',color:'var(--gn)',margin:'2px'}},t.nm);
-      });
-      if(p.turmas.length>18)turmaTags.push(h('span',{style:{fontSize:'10px',color:'var(--tx3)',margin:'2px'}},'+' +(p.turmas.length-18)+' mais'));
-
-      var locTags=p.locs.map(function(l){
-        return h('span',{style:{display:'inline-block',background:'rgba(251,191,36,.1)',border:'1px solid rgba(251,191,36,.25)',borderRadius:'4px',padding:'2px 7px',fontSize:'10px',color:'var(--am)',margin:'2px'}},l.nm);
-      });
-
+          h('div',{'class':'fr'},h('div',{'class':'fg'},h('label',{'class':'fl'},'Codigo (URL)'),codeInp),h('div',{'class':'fg'},h('label',{'class':'fl'},'Cidade'),cityInp)),
+          h('div',{'class':'fr'},h('div',{'class':'fg'},h('label',{'class':'fl'},'Contato'),contactInp),h('div',{'class':'fg'},h('label',{'class':'fl'},'Senha Admin'),passInp)),
+          h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'4px'}},'URL: ?escola='+(f.code||'codigo')+'  Login: admin / '+(f.adminPass||'admin123')),
+          importBox),
+        h('div',{'class':'md-f'},h('button',{'class':'btn',onclick:close},'Cancelar'),h('button',{'class':'btn btn-p',onclick:function(){readF();doCreate(null)}},'Criar sem importar'))));
+    } else {
+      var p=bracketParsed;var brkKeys=Object.keys(p.brackets);
+      var totalConf=0;brkKeys.forEach(function(k){p.brackets[k].rounds.forEach(function(rd){totalConf+=rd.m.length})});
+      function sc2(icon,label,val,clr){return h('div',{style:{background:'var(--c2)',border:'1px solid var(--br)',borderRadius:'8px',padding:'10px',flex:'1',minWidth:'70px',textAlign:'center'}},h('div',{style:{fontSize:'20px',fontWeight:'700'}},''+val),h('div',{style:{fontSize:'10px',color:clr||'var(--tx2)',marginTop:'2px'}},icon+' '+label))}
+      var sptRows=brkKeys.map(function(k){var bd=p.brackets[k];var sp=p.spt.find(function(s){return s.id===bd.sp.id});var tot=bd.rounds.length;var ph=bd.rounds.map(function(rd,i){var d=tot-1-i;return(d===0?'Final':d===1?'Semi':d===2?'Quartas':'Fase '+(i+1))+'('+rd.m.length+'j)'}).join(' > ');return h('div',{style:{display:'flex',gap:'8px',padding:'5px 0',borderBottom:'1px solid var(--br)',alignItems:'center'}},h('span',{style:{background:'rgba(139,92,246,.12)',borderRadius:'4px',padding:'2px 6px',fontSize:'10px',color:'var(--pu)',minWidth:'90px',flexShrink:'0'}},sp?sp.base:'?'),h('span',{style:{fontSize:'10px',color:'var(--tx2)',width:'70px',flexShrink:'0'}},bd.gender),h('span',{style:{fontSize:'10px',color:'var(--tx3)'}},ph))});
+      var turmaTags=p.turmas.slice(0,18).map(function(t){return h('span',{style:{display:'inline-block',background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.25)',borderRadius:'4px',padding:'2px 7px',fontSize:'10px',color:'var(--gn)',margin:'2px'}},t.nm)});
+      if(p.turmas.length>18)turmaTags.push(h('span',{style:{fontSize:'10px',color:'var(--tx3)',margin:'2px'}},'+'+(p.turmas.length-18)+' mais'));
+      var locTags=p.locs.map(function(l){return h('span',{style:{display:'inline-block',background:'rgba(251,191,36,.1)',border:'1px solid rgba(251,191,36,.25)',borderRadius:'4px',padding:'2px 7px',fontSize:'10px',color:'var(--am)',margin:'2px'}},l.nm)});
       ov.appendChild(h('div',{'class':'md',style:{maxWidth:'640px'}},
-        h('div',{'class':'md-h'},
-          h('div',{'class':'md-t'},'\u2705 Confrontos Detectados'),
-          h('button',{'class':'btn btn-s',onclick:close},'\u2715')
-        ),
+        h('div',{'class':'md-h'},h('div',{'class':'md-t'},'✅ Confrontos Detectados'),h('button',{'class':'btn btn-s',onclick:close},'✕')),
         h('div',{'class':'md-b'},
-          h('div',{style:{fontSize:'12px',color:'var(--gn)',marginBottom:'12px'}},'\u2705 Arquivo lido! Confirme antes de criar a escola.'),
-          h('div',{style:{display:'flex',gap:'8px',marginBottom:'14px',flexWrap:'wrap'}},
-            statCard('\uD83C\uDFEB','Turmas',''+p.turmas.length,'var(--gn)'),
-            statCard('\uD83C\uDFC5','Esportes',''+p.spt.length,'var(--pu)'),
-            statCard('\uD83D\uDCCD','Locais',''+p.locs.length,'var(--am)'),
-            statCard('\u2694\uFE0F','Confrontos',''+totalConf,'var(--cy)')
-          ),
-          h('div',{style:{marginBottom:'12px'}},
-            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--pu)',marginBottom:'6px'}},'Modalidades e fases detectadas'),
-            h('div',{style:{maxHeight:'180px',overflowY:'auto'}},sptRows)
-          ),
-          h('div',{style:{marginBottom:'10px'}},
-            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--gn)',marginBottom:'4px'}},'Turmas ('+p.turmas.length+')'),
-            h('div',{},turmaTags)
-          ),
-          p.locs.length?h('div',{style:{marginBottom:'10px'}},
-            h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--am)',marginBottom:'4px'}},'Locais detectados'),
-            h('div',{},locTags)
-          ):h('div',{}),
-          h('div',{style:{background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.2)',borderRadius:'6px',padding:'8px 12px',fontSize:'11px',color:'var(--am)'}},
-            '\u26A0\uFE0F Chaveamentos criados prontos para resultados. Pontuacao ajustavel no painel admin.')
-        ),
+          h('div',{style:{fontSize:'12px',color:'var(--gn)',marginBottom:'12px'}},'✅ Arquivo lido! Confirme antes de criar a escola.'),
+          h('div',{style:{display:'flex',gap:'8px',marginBottom:'14px',flexWrap:'wrap'}},sc2('🏫','Turmas',''+p.turmas.length,'var(--gn)'),sc2('🏅','Esportes',''+p.spt.length,'var(--pu)'),sc2('📍','Locais',''+p.locs.length,'var(--am)'),sc2('⚔️','Confrontos',''+totalConf,'var(--cy)')),
+          h('div',{style:{marginBottom:'12px'}},h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--pu)',marginBottom:'6px'}},'Modalidades e fases'),h('div',{style:{maxHeight:'160px',overflowY:'auto'}},sptRows)),
+          h('div',{style:{marginBottom:'10px'}},h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--gn)',marginBottom:'4px'}},'Turmas ('+p.turmas.length+')'),h('div',{},turmaTags)),
+          p.locs.length?h('div',{style:{marginBottom:'10px'}},h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--am)',marginBottom:'4px'}},'Locais'),h('div',{},locTags)):h('span',{}),
+          h('div',{style:{background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.2)',borderRadius:'6px',padding:'8px 12px',fontSize:'11px',color:'var(--am)'}},'⚠️ Chaveamentos prontos para resultados. Pontuacao ajustavel no admin.')),
         h('div',{'class':'md-f'},
-          h('button',{'class':'btn',onclick:function(){step='form';bracketParsed=null;renderStep()}},'\u2190 Voltar'),
+          h('button',{'class':'btn',onclick:function(){step='form';bracketParsed=null;renderStep()}},'← Voltar'),
           h('button',{'class':'btn',onclick:function(){bracketParsed=null;doCreate(null)}},'Criar sem importar'),
-          h('button',{'class':'btn btn-p',onclick:function(){
-            var state=jimBracketDataToSchoolState(bracketParsed,f.adminPass,'Jogos 2026');
-            doCreate(state);
-          }},'\uD83D\uDE80 Criar com Confrontos')
-        )
-      ));
+          h('button',{'class':'btn btn-p',onclick:function(){doCreate(jimBracketDataToSchoolState(bracketParsed,f.adminPass,'Jogos 2026'))}},'🚀 Criar com Confrontos'))));
     }
   }
-
-  renderStep();
-  root.appendChild(ov);
+  renderStep();root.appendChild(ov);
 }
 
 function uid(){return Math.random().toString(36).slice(2,9)}
@@ -1727,7 +1343,7 @@ function pS(c){
       ),
       h('div',{'class':'card-b'},
         h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'6px'}},s.mn+'–'+s.mx+' jogadores · '+s.dur+'min'),
-        h('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'6px'}},s.ct.map(function(x){return h('span',{'class':'badge '+(cc[x]||'bc')},x)})),
+        h('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'6px'}},(s.ct||[]).map(function(x){return h('span',{'class':'badge '+(cc[x]||'bc')},x)})),
         h('div',{style:{fontSize:'10px',color:'var(--tx3)'}},'Desempate: '+tbList.map(function(k){return tbNames[k]||k}).join(' → '))
       )
     ));
@@ -1911,20 +1527,14 @@ function pB(c){
   if(cats.length>1){var t2=h('div',{'class':'tabs',style:{marginBottom:'0'}});cats.forEach(function(ct){t2.appendChild(h('button',{'class':'tab'+(S.bc===ct?' active':''),onclick:(function(c2){return function(){S.bc=c2;R()}})(ct)},ct))});bar.appendChild(t2)}
 
   if(S.role==='admin'&&tms.length>=2){
-    var hasExisting=!!(S.brk[bkey]&&S.brk[bkey][S.bc]&&S.brk[bkey][S.bc].length);
+    var hasEx=!!(S.brk[bkey]&&S.brk[bkey][S.bc]&&S.brk[bkey][S.bc].length);
     bar.appendChild(h('button',{'class':'btn btn-p',
-      title:hasExisting?'⚠️ Já existe chaveamento — clique para substituir':'Gerar chaveamento aleatório',
-      style:hasExisting?{background:'linear-gradient(135deg,#b45309,#92400e)',boxShadow:'0 0 0 2px #fbbf24'}:{},
+      style:hasEx?{background:'linear-gradient(135deg,#b45309,#92400e)',boxShadow:'0 0 0 2px #fbbf24'}:{},
       onclick:function(){
-        if(hasExisting){
-          if(!confirm('⚠️ Atenção!\n\nJá existe um chaveamento para este esporte/categoria com resultados ou confrontos definidos.\n\nSortear novamente irá APAGAR todos os confrontos e resultados existentes.\n\nDeseja continuar?'))return;
-          if(!confirm('Segunda confirmação:\n\nTem certeza? Esta ação não pode ser desfeita.\n\nClique OK para apagar e gerar um novo sorteio.'))return;
-        }
-        if(!S.brk[bkey])S.brk[bkey]={};
-        S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),has3rd);
-        scheduleSave();R();
+        if(hasEx){if(!confirm('Ja existe chaveamento. Sortear ira APAGAR todos os confrontos e resultados. Continuar?'))return;if(!confirm('Segunda confirmacao: apagar e gerar novo sorteio?'))return;}
+        if(!S.brk[bkey])S.brk[bkey]={};S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),has3rd);scheduleSave();R();
       }
-    },hasExisting?'⚠️ Resortear':'🎲 Sortear'));
+    },hasEx?'Resortear':'Sortear'));
   }
 
   // 3rd place toggle
@@ -4216,55 +3826,54 @@ function mAddRecurso(c){
 // SCORING CONFIG PAGE (admin only)
 // ══════════════════════════════════════════════════════════════════════════════
 function pScoring(c){
-  if(!S.scoring)S.scoring={p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1,pWin:3,pWO:-2};
-  var sc=S.scoring;
-  function mkInp(label,key,color){
-    var inp=h('input',{'class':'fi',type:'number',inputmode:'numeric',value:''+(sc[key]!=null?sc[key]:0),
-      style:{maxWidth:'70px',textAlign:'center',fontSize:'15px',fontWeight:'700',fontFamily:"'Space Mono'"},
-      oninput:function(e){sc[key]=parseInt(e.target.value)||0}
-    });
-    return h('div',{style:{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',borderBottom:'1px solid var(--bd)'}},
-      h('div',{style:{width:'32px',height:'32px',borderRadius:'50%',background:color,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'800',fontSize:'12px',color:'#fff',flexShrink:'0'}},label.charAt(0)),
-      h('div',{style:{flex:'1'}},h('div',{style:{fontWeight:'700',fontSize:'12px'}},label),h('div',{style:{fontSize:'9px',color:'var(--tx3)'}},key==='pWin'?'Por vitória no chaveamento':key==='pWO'?'Penalidade (use negativo)':'Posição final')),
-      inp
-    );
+  var PLCL=['#f59e0b','#94a3b8','#fb923c','#64748b','#8b5cf6','#06b6d4','#84cc16','#ec4899','#f97316','#22d3ee'];
+  if(!S.scoring||!S.scoring.positions){
+    var old2=S.scoring||{};var pl=[];
+    for(var i=1;i<=8;i++){var v=old2['p'+i];if(v!=null)pl.push({key:'p'+i,label:i+'o Lugar',color:PLCL[i-1]||'#64748b',pts:v})}
+    if(!pl.length)pl=[{key:'p1',label:'1o Lugar',color:PLCL[0],pts:10},{key:'p2',label:'2o Lugar',color:PLCL[1],pts:8},{key:'p3',label:'3o Lugar',color:PLCL[2],pts:6},{key:'p4',label:'4o Lugar',color:PLCL[3],pts:4}];
+    S.scoring={positions:pl,pWin:old2.pWin!=null?old2.pWin:3,pDraw:old2.pDraw!=null?old2.pDraw:1,pLoss:old2.pLoss!=null?old2.pLoss:0,pWO:old2.pWO!=null?old2.pWO:-2};
   }
-  c.appendChild(h('div',{'class':'card',style:{marginBottom:'20px'}},
-    h('div',{'class':'card-h'},h('div',{'class':'card-t'},'🎯 Regra de Pontuação')),
-    h('div',{'class':'card-b'},
-      h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.7'}},'Configure os pontos para cada posição (1º a 8º). Aplica-se a esportes coletivos e individuais.'),
-      mkInp('1º Lugar','p1','#f59e0b'),
-      mkInp('2º Lugar','p2','#94a3b8'),
-      mkInp('3º Lugar','p3','#fb923c'),
-      mkInp('4º Lugar','p4','#64748b'),
-      mkInp('5º Lugar','p5','#8b5cf6'),
-      mkInp('6º Lugar','p6','#06b6d4'),
-      mkInp('7º Lugar','p7','#84cc16'),
-      mkInp('8º Lugar','p8','#ec4899'),
-      mkInp('Vitória','pWin','#34d399'),
-      mkInp('W.O.','pWO','#f87171'),
-      h('div',{style:{marginTop:'16px',display:'flex',gap:'8px'}},
-        h('button',{'class':'btn btn-p',onclick:function(){S.scoring=sc;R();}},'✅ Salvar'),
-        h('button',{'class':'btn',onclick:function(){S.scoring={p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1,pWin:3,pWO:-2};R();}},'Restaurar Padrão')
-      )
-    )
-  ));
-  // Preview
-  c.appendChild(h('div',{'class':'card'},
-    h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📊 Exemplo de Pontuação')),
-    h('div',{'class':'card-b',style:{fontSize:'12px',color:'var(--tx2)',lineHeight:'1.8'}},
-      h('div',{html:'Se uma equipe vence 3 jogos e fica em 1º lugar:<br>'+
-        '<b style="color:var(--gn)">Vitórias:</b> 3 × '+(sc.pWin||0)+' = <b>'+(3*(sc.pWin||0))+'</b> pts<br>'+
-        '<b style="color:var(--am)">1º Lugar:</b> '+(sc.p1||0)+' pts<br>'+
-        '<b>Total:</b> <span style="color:var(--pr);font-size:16px;font-weight:800">'+(3*(sc.pWin||0)+(sc.p1||0))+'</span> pontos<br><br>'+
-        'Se um time leva W.O.:<br><b style="color:var(--rd)">Penalidade:</b> '+(sc.pWO||0)+' pts por W.O.'})
-    )
-  ));
+  var sc=S.scoring;
+  function mkRow(label,icon,color,val,onChange,onRemove){
+    var inp=h('input',{'class':'fi',type:'number',inputmode:'numeric',value:''+val,style:{maxWidth:'72px',textAlign:'center',fontSize:'15px',fontWeight:'700',fontFamily:"'Space Mono'"},oninput:function(e){onChange(parseInt(e.target.value)||0)}});
+    var row=h('div',{style:{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',borderBottom:'1px solid var(--br)'}},
+      h('div',{style:{width:'32px',height:'32px',borderRadius:'50%',background:color,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'800',fontSize:'11px',color:'#fff',flexShrink:'0'}},icon),
+      h('div',{style:{flex:'1'}},h('div',{style:{fontWeight:'600',fontSize:'12px'}},label)),inp);
+    if(onRemove)row.appendChild(h('button',{'class':'btn btn-s btn-r',style:{padding:'4px 8px',fontSize:'11px'},onclick:onRemove},'x'));
+    return row;
+  }
+  function render(){
+    c.innerHTML='';
+    var posSection=h('div',{});
+    sc.positions.forEach(function(pos,idx){
+      posSection.appendChild(mkRow(pos.label,''+(idx+1),pos.color||PLCL[idx]||'#64748b',pos.pts!=null?pos.pts:0,
+        function(i){return function(v){sc.positions[i].pts=v}}(idx),
+        sc.positions.length>1?function(i){return function(){sc.positions.splice(i,1);sc.positions.forEach(function(p,j){p.key='p'+(j+1);p.label=(j+1)+'o Lugar';p.color=PLCL[j]||'#64748b'});render()}}(idx):null
+      ));
+    });
+    var addBtn=h('button',{'class':'btn btn-s',style:{marginTop:'8px',width:'100%'},onclick:function(){var ni=sc.positions.length;if(ni>=10)return;sc.positions.push({key:'p'+(ni+1),label:(ni+1)+'o Lugar',color:PLCL[ni]||'#64748b',pts:0});render()}},sc.positions.length<10?'+ Adicionar colocacao':'Maximo (10)');
+    var fixedSec=h('div',{style:{marginTop:'14px',paddingTop:'10px',borderTop:'2px solid var(--br)'}});
+    fixedSec.appendChild(h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--tx3)',marginBottom:'8px',textTransform:'uppercase',letterSpacing:'.05em'}},'Por resultado de jogo'));
+    fixedSec.appendChild(mkRow('Vitoria','V','#34d399',sc.pWin!=null?sc.pWin:3,function(v){sc.pWin=v}));
+    fixedSec.appendChild(mkRow('Empate','E','#60a5fa',sc.pDraw!=null?sc.pDraw:1,function(v){sc.pDraw=v}));
+    fixedSec.appendChild(mkRow('Derrota','D','#6b7280',sc.pLoss!=null?sc.pLoss:0,function(v){sc.pLoss=v}));
+    fixedSec.appendChild(mkRow('W.O.','W','#f87171',sc.pWO!=null?sc.pWO:-2,function(v){sc.pWO=v}));
+    var prev=h('div',{style:{marginTop:'10px',padding:'8px 12px',background:'rgba(139,92,246,.08)',borderRadius:'8px',fontSize:'11px',color:'var(--tx2)',lineHeight:'1.7'}});
+    var ex1=((sc.pWin||0)*3)+((sc.positions[0]?sc.positions[0].pts||0:0));
+    prev.innerHTML='<b>Exemplo:</b> 3 vitorias + 1o lugar = <b style="color:var(--pr)">'+ex1+' pts</b> | W.O. = <b style="color:var(--rd)">'+(sc.pWO||0)+' pts</b>';
+    c.appendChild(h('div',{'class':'card',style:{marginBottom:'16px'}},
+      h('div',{'class':'card-h'},h('div',{'class':'card-t'},'Pontuacao por Colocacao'),h('div',{style:{fontSize:'11px',color:'var(--tx3)'}},'x = remover | + = adicionar')),
+      h('div',{'class':'card-b'},h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'10px',lineHeight:'1.6'}},'Defina pontos para cada colocacao final.'),posSection,addBtn)));
+    c.appendChild(h('div',{'class':'card',style:{marginBottom:'16px'}},
+      h('div',{'class':'card-h'},h('div',{'class':'card-t'},'Pontuacao por Resultado de Jogo')),
+      h('div',{'class':'card-b'},h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'10px',lineHeight:'1.6'}},'Pontos acumulados por jogo disputado.'),fixedSec,prev)));
+    c.appendChild(h('div',{style:{display:'flex',gap:'8px',marginBottom:'16px'}},
+      h('button',{'class':'btn btn-p',onclick:function(){scheduleSave();var msg=document.createElement('div');msg.style.cssText='position:fixed;bottom:24px;right:24px;background:#34d399;color:#022c22;padding:10px 18px;border-radius:8px;font-weight:700;font-size:13px;z-index:9999;';msg.textContent='Pontuacao salva!';document.body.appendChild(msg);setTimeout(function(){if(msg.parentNode)msg.parentNode.removeChild(msg)},2000)}},'Salvar'),
+      h('button',{'class':'btn',onclick:function(){if(!confirm('Restaurar padrao?'))return;S.scoring={positions:[{key:'p1',label:'1o Lugar',color:PLCL[0],pts:10},{key:'p2',label:'2o Lugar',color:PLCL[1],pts:8},{key:'p3',label:'3o Lugar',color:PLCL[2],pts:6},{key:'p4',label:'4o Lugar',color:PLCL[3],pts:4}],pWin:3,pDraw:1,pLoss:0,pWO:-2};render()}},'Restaurar Padrao')));
+  }
+  render();
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// INDIVIDUAL SPORTS PAGE (admin only)
-// ══════════════════════════════════════════════════════════════════════════════
 function pIndividual(c){
   if(!S.podiums)S.podiums=[];
   // Header
