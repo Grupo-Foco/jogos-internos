@@ -765,7 +765,7 @@ function _buildJimRows(rows){
     var nm=normModal(r.modal);
     var spKey=nm.base+'|'+nm.gender;
     var sp=sptSet[spKey];if(!sp)return;
-    var serie=(r.serie||'').trim().toUpperCase()||'GERAL';
+    var serie=(r.serie||'').trim().replace(/[\u00b0\u00ba]/g,'\u00ba').toUpperCase()||'GERAL';
     // Bracket key = sportId + serie + gender
     var bKey=sp.id+'|'+serie+'|'+nm.gender;
     if(!brkGroups[bKey])brkGroups[bKey]={sp:sp,gender:nm.gender,serie:serie,matchesByFase:{}};
@@ -1015,18 +1015,22 @@ function rName(r,t){var d=t-r;return d===0?'Final':d===1?'Semi':d===2?'Quartas':
 
 function tName(id){
   if(!id||id==='BYE')return'BYE';
+  if(!id||id.indexOf('PH_')===0)return'A definir';
   if(id.indexOf('W_')===0)return'A definir';
   if(id.indexOf('L_')===0){
-    // loser of a match
-    var mid=id.slice(2);
-    var found=null;
+    var mid=id.slice(2);var found=null;
     Object.values(S.brk).forEach(function(sb){Object.values(sb).forEach(function(rs){rs.forEach(function(r){r.m.forEach(function(m){if(m.id===mid)found=m})})})});
     if(!found)return'A definir';
-    if(found.w===null)return'Perdedor Semi';
+    if(found.w===null)return'Perd. Semi';
     return found.w===found.t1?tName(found.t2):tName(found.t1);
   }
+  // Try enrollment id first (normal flow)
   var e=S.enr.find(function(x){return x.id===id});
-  return e?e.tn:'—';
+  if(e&&e.tn)return e.tn;
+  // Try turma id directly (imported brackets)
+  var cl=S.cls.find(function(x){return x.id===id});
+  if(cl)return cl.nm;
+  return'—';
 }
 
 function calcRk(){
@@ -1593,34 +1597,30 @@ function pES(c){
 }
 function pB(c){
   var ap=S.enr.filter(function(e){return e.st==='approved'});
-  if(!ap.length){c.appendChild(h('div',{'class':'card'},h('div',{'class':'card-b'},h('div',{'class':'em'},'Aprove inscricoes primeiro'))));return}
 
-  // ── YEAR TABS ──────────────────────────────────────────────────────────
+  // Year selection
   var anos=getAnos();
   if(!S.bay||anos.indexOf(S.bay)<0)S.bay=anos[0]||'';
   if(anos.length>1){
     var ytabs=h('div',{'class':'tabs'});
-    anos.forEach(function(a){ytabs.appendChild(h('button',{'class':'tab'+(S.bay===a?' active':''),onclick:(function(y){return function(){S.bay=y;S.bs='';S.bserie='';S.bc='';R()}})(y)},a))});
+    anos.forEach(function(a){ytabs.appendChild(h('button',{'class':'tab'+(S.bay===a?' active':''),onclick:(function(y){return function(){S.bay=y;S.bs='';S.bserie='';S.bc='';R()}})(a)},a))});
     c.appendChild(ytabs);
   }
 
+  // Build metadata from brk (imported) + enrollments (normal)
+  var brkAllKeys=Object.keys(S.brk).filter(function(bk){
+    // bk = YEAR__spId__SERIE or YEAR__spId
+    return bk.indexOf(S.bay+'__')===0;
+  });
+
   var apYear=getEnrByAno(S.bay,ap);
 
-  // Build list of all bracket keys for this year
-  var brkYearKeys=Object.keys(S.brk).filter(function(bk){return bk.indexOf(S.bay+'__')===0});
-
-  // If no enrollments but have brackets (imported), show brackets directly
-  if(!apYear.length&&!brkYearKeys.length){
-    c.appendChild(h('div',{'class':'card'},h('div',{'class':'card-b'},h('div',{'class':'em'},'Nenhuma equipe aprovada para '+S.bay))));return;
-  }
-
-  // ── Build bracket metadata from brk keys ─────────────────────────────
-  // bk format: YEAR__sportId__SERIE  (or YEAR__sportId for old format)
+  // brkMeta: one entry per (sport, serie, gender)
   var brkMeta=[];
-  brkYearKeys.forEach(function(bk){
+  brkAllKeys.forEach(function(bk){
     var parts=bk.split('__');
     var spId=parts[1]||'';
-    var serie=parts[2]||'';
+    var serie=parts.slice(2).join('__')||'GERAL';
     var sp=S.spt.find(function(s){return s.id===spId});
     if(!sp)return;
     var genders=Object.keys(S.brk[bk]);
@@ -1628,152 +1628,232 @@ function pB(c){
       brkMeta.push({bk:bk,spId:spId,spNm:sp.nm,serie:serie,gender:g});
     });
   });
-
-  // Also add from enrollments (for non-imported schools)
-  var cmb=[];
+  // Also add from enrollments (schools without import)
   apYear.forEach(function(e){
-    var k=e.si+'_'+e.ct;
-    if(!cmb.find(function(x){return x.k===k}))cmb.push({k:k,si:e.si,ct:e.ct});
-  });
-  cmb.forEach(function(x){
-    var bk=S.bay+'__'+x.si+'__GERAL';
-    var sp=S.spt.find(function(s){return s.id===x.si});
+    var sp=S.spt.find(function(s){return s.id===e.si});
     if(!sp)return;
-    if(!brkMeta.find(function(m){return m.bk===bk&&m.gender===x.ct})){
-      brkMeta.push({bk:bk,spId:x.si,spNm:sp.nm,serie:'GERAL',gender:x.ct});
-    }
+    var bk=S.bay+'__'+e.si+'__GERAL';
+    if(!brkMeta.find(function(m){return m.bk===bk&&m.gender===e.ct}))
+      brkMeta.push({bk:bk,spId:e.si,spNm:sp.nm,serie:'GERAL',gender:e.ct});
   });
 
-  if(!brkMeta.length){c.appendChild(h('div',{'class':'card'},h('div',{'class':'card-b'},h('div',{'class':'em'},'Nenhum chaveamento encontrado'))));return}
+  if(!brkMeta.length){
+    c.appendChild(h('div',{'class':'card'},h('div',{'class':'card-b'},
+      h('div',{'class':'em'},'Nenhum chaveamento para '+S.bay+'. Importe dados ou aprove inscricoes.'))));
+    return;
+  }
 
-  // ── SPORT TABS (unique sports) ─────────────────────────────────────────
+  // Unique sports, genders, series
   var uniqueSports=[...new Set(brkMeta.map(function(m){return m.spId}))];
   if(!S.bs||uniqueSports.indexOf(S.bs)<0)S.bs=uniqueSports[0];
 
-  // ── GENDER FILTER BUTTONS ─────────────────────────────────────────────
   var gendersForSport=[...new Set(brkMeta.filter(function(m){return m.spId===S.bs}).map(function(m){return m.gender}))];
-  if(!S.bc||gendersForSport.indexOf(S.bc)<0)S.bc=gendersForSport[0]||'';
+  if(!S.bc||gendersForSport.indexOf(S.bc)<0)S.bc=gendersForSport[0]||'Masculino';
 
-  // ── SERIE FILTER ──────────────────────────────────────────────────────
-  var seriesForSportGender=[...new Set(brkMeta.filter(function(m){return m.spId===S.bs&&m.gender===S.bc}).map(function(m){return m.serie}))].sort();
-  if(!S.bserie||seriesForSportGender.indexOf(S.bserie)<0)S.bserie=seriesForSportGender[0]||'';
+  var seriesForFilter=[...new Set(brkMeta.filter(function(m){return m.spId===S.bs&&m.gender===S.bc}).map(function(m){return m.serie}))];
+  // Sort series: numeric parts first
+  seriesForFilter.sort(function(a,b){
+    var na=parseInt(a)||999,nb=parseInt(b)||999;
+    if(na!==nb)return na-nb;
+    return a.localeCompare(b,'pt');
+  });
+  if(!S.bserie||seriesForFilter.indexOf(S.bserie)<0)S.bserie=seriesForFilter[0]||'GERAL';
 
   var bkey=S.bay+'__'+S.bs+'__'+S.bserie;
-  var has3rd=!!(S.thirdPlace[bkey]&&S.thirdPlace[bkey][S.bc]);
   var tms=apYear.filter(function(e){return e.si===S.bs&&e.ct===S.bc});
+  var has3rd=!!(S.thirdPlace[bkey]&&S.thirdPlace[bkey][S.bc]);
+  var sp2=S.spt.find(function(s){return s.id===S.bs});
 
-  // ── RENDER FILTER BAR ─────────────────────────────────────────────────
-  var t1=h('div',{'class':'tabs',style:{marginBottom:'4px',flexWrap:'wrap'}});
-  uniqueSports.forEach(function(si){
-    var sp=S.spt.find(function(s){return s.id===si});
-    t1.appendChild(h('button',{'class':'tab'+(S.bs===si?' active':''),onclick:(function(id){return function(){S.bs=id;S.bserie='';S.bc='';R()}})(si)},(sp&&sp.nm)||si));
-  });
-  c.appendChild(t1);
+  // ── LAYOUT: 2 columns — left filters, right bracket ──────────────────
+  var wrap=h('div',{style:{display:'flex',gap:'16px',alignItems:'flex-start',flexWrap:'wrap'}});
+
+  // ── LEFT SIDEBAR FILTERS ──────────────────────────────────────────────
+  var sidebar=h('div',{style:{width:'160px',flexShrink:'0'}});
 
   // Gender filter
-  if(gendersForSport.length>1){
-    var gBar=h('div',{style:{display:'flex',gap:'6px',marginBottom:'6px',flexWrap:'wrap'}});
-    var gLabels={Masculino:'Masculino',Feminino:'Feminino',Misto:'Misto'};
+  if(gendersForSport.length){
+    sidebar.appendChild(h('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'4px'}},'Genero'));
+    var gBox=h('div',{style:{marginBottom:'12px'}});
     gendersForSport.forEach(function(g){
-      gBar.appendChild(h('button',{'class':'btn btn-s'+(S.bc===g?' btn-p':''),onclick:(function(gv){return function(){S.bc=gv;S.bserie='';R()}})(g)},gLabels[g]||g));
+      var gLabel={Masculino:'Masculino',Feminino:'Feminino',Misto:'Misto'}[g]||g;
+      gBox.appendChild(h('button',{
+        'class':'btn btn-s',
+        style:Object.assign({display:'block',width:'100%',textAlign:'left',marginBottom:'3px',fontSize:'11px'},S.bc===g?{background:'var(--pu)',color:'#fff'}:{}),
+        onclick:(function(gv){return function(){S.bc=gv;S.bserie='';R()}})(g)
+      },gLabel));
     });
-    c.appendChild(gBar);
+    sidebar.appendChild(gBox);
   }
 
-  // Serie filter
-  if(seriesForSportGender.length>1){
-    var sBar=h('div',{style:{display:'flex',gap:'6px',marginBottom:'10px',flexWrap:'wrap'}});
-    seriesForSportGender.forEach(function(sr){
-      sBar.appendChild(h('button',{'class':'btn btn-s'+(S.bserie===sr?' btn-p':''),style:{fontSize:'11px'},onclick:(function(sv){return function(){S.bserie=sv;R()}})(sr)},sr));
+  // Serie filter (scrollable list)
+  if(seriesForFilter.length>1){
+    sidebar.appendChild(h('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'4px'}},'Serie / Turma'));
+    var srBox=h('div',{style:{maxHeight:'280px',overflowY:'auto',marginBottom:'12px'}});
+    seriesForFilter.forEach(function(sr){
+      var srLabel=sr==='GERAL'?'Todas':sr;
+      srBox.appendChild(h('button',{
+        'class':'btn btn-s',
+        style:Object.assign({display:'block',width:'100%',textAlign:'left',marginBottom:'3px',fontSize:'11px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'},S.bserie===sr?{background:'var(--cy)',color:'#0f172a'}:{}),
+        onclick:(function(sv){return function(){S.bserie=sv;R()}})(sr)
+      },srLabel));
     });
-    c.appendChild(sBar);
+    sidebar.appendChild(srBox);
   }
 
-  // ── ACTION BAR (admin) ────────────────────────────────────────────────
-  var sp2=S.spt.find(function(s){return s.id===S.bs});
-  var barBtns=h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginBottom:'16px',alignItems:'center'}});
+  // Sport filter (scrollable)
+  sidebar.appendChild(h('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'4px'}},'Esporte'));
+  var spBox=h('div',{style:{maxHeight:'240px',overflowY:'auto'}});
+  uniqueSports.forEach(function(si){
+    var sp=S.spt.find(function(s){return s.id===si});
+    spBox.appendChild(h('button',{
+      'class':'btn btn-s',
+      style:Object.assign({display:'block',width:'100%',textAlign:'left',marginBottom:'3px',fontSize:'11px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'},S.bs===si?{background:'var(--gn)',color:'#022c22'}:{}),
+      onclick:(function(id){return function(){S.bs=id;S.bserie='';S.bc='';R()}})(si)
+    },(sp&&sp.nm)||si));
+  });
+  sidebar.appendChild(spBox);
 
+  wrap.appendChild(sidebar);
+
+  // ── RIGHT: bracket content ────────────────────────────────────────────
+  var main=h('div',{style:{flex:'1',minWidth:'0'}});
+
+  // Action bar (admin)
   if(S.role==='admin'){
+    var bar=h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'14px',alignItems:'center'}});
     var hasEx=!!(S.brk[bkey]&&S.brk[bkey][S.bc]&&S.brk[bkey][S.bc].length);
-    // Only show Sortear if NO imported bracket or school chose to regenerate
     if(tms.length>=2){
-      barBtns.appendChild(h('button',{'class':'btn btn-p',
+      bar.appendChild(h('button',{
+        'class':'btn btn-p',
         style:hasEx?{background:'linear-gradient(135deg,#b45309,#92400e)',boxShadow:'0 0 0 2px #fbbf24'}:{},
         onclick:function(){
-          if(hasEx){if(!confirm('Ja existe chaveamento. Sortear ira APAGAR todos os confrontos e resultados. Continuar?'))return;if(!confirm('Segunda confirmacao?'))return;}
-          if(!S.brk[bkey])S.brk[bkey]={};S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),has3rd);scheduleSave();R();
+          if(hasEx){if(!confirm('Apagar chaveamento existente e sortear novamente?'))return;if(!confirm('Confirmar?'))return;}
+          if(!S.brk[bkey])S.brk[bkey]={};
+          S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),has3rd);
+          scheduleSave();R();
         }
       },hasEx?'Resortear':'Sortear'));
+      bar.appendChild(h('button',{'class':'btn'+(has3rd?' btn-p':''),onclick:function(){
+        if(!S.thirdPlace[bkey])S.thirdPlace[bkey]={};
+        S.thirdPlace[bkey][S.bc]=!has3rd;
+        if(S.brk[bkey]&&S.brk[bkey][S.bc]&&S.brk[bkey][S.bc].length)
+          S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),!has3rd);
+        R();
+      }},has3rd?'3o Lugar: ON':'3o Lugar: OFF'));
     }
-
-    if(tms.length>=2){
-      barBtns.appendChild(h('button',{'class':'btn'+(has3rd?' btn-p':''),
-        onclick:function(){
-          if(!S.thirdPlace[bkey])S.thirdPlace[bkey]={};
-          S.thirdPlace[bkey][S.bc]=!has3rd;
-          if(S.brk[bkey]&&S.brk[bkey][S.bc]&&S.brk[bkey][S.bc].length)S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),!has3rd);
-          R();
-        }
-      },has3rd?'3o Lugar: ON':'3o Lugar: OFF'));
-    }
-
-    // Auto-schedule
-    barBtns.appendChild(h('button',{'class':'btn',onclick:function(){S.mod={tp:'autoSch',bkey:bkey,ct:S.bc};R()}},'Agendar Auto'));
-    // Export
-    barBtns.appendChild(h('button',{'class':'btn',style:{marginLeft:'auto'},onclick:function(){exportBracket(bkey,S.bc)}},'Exportar'));
+    bar.appendChild(h('button',{'class':'btn',onclick:function(){S.mod={tp:'autoSch',bkey:bkey,ct:S.bc};R()}},'Agendar Auto'));
+    bar.appendChild(h('button',{'class':'btn',style:{marginLeft:'auto'},onclick:function(){exportBracket(bkey,S.bc)}},'Exportar'));
+    if(bar.children.length)main.appendChild(bar);
   }
-  if(barBtns.children.length)c.appendChild(barBtns);
 
-  // ── BRACKET TITLE ─────────────────────────────────────────────────────
+  // Title
   var spName=(sp2&&sp2.nm)||'Esporte';
-  var serieLabel=S.bserie&&S.bserie!=='GERAL'?' ('+S.bserie+')':'';
-  c.appendChild(h('div',{style:{fontWeight:'700',fontSize:'14px',marginBottom:'12px',color:'var(--tx)'}},
+  var serieLabel=S.bserie&&S.bserie!=='GERAL'?' - '+S.bserie:'';
+  main.appendChild(h('div',{style:{fontWeight:'700',fontSize:'15px',marginBottom:'14px',color:'var(--tx)'}},
     spName+' \u2014 '+S.bc+serieLabel));
 
-  // ── BRACKET RENDER ────────────────────────────────────────────────────
+  // Bracket: show as match list (like dashboard)
   var rds=S.brk[bkey]&&S.brk[bkey][S.bc]?S.brk[bkey][S.bc]:[];
   if(!rds.length){
-    c.appendChild(h('div',{'class':'card'},h('div',{'class':'card-b'},h('div',{'class':'em'},'Clique "Sortear" para gerar chaveamento'))));
+    main.appendChild(h('div',{'class':'card'},h('div',{'class':'card-b'},
+      h('div',{'class':'em'},'Nenhum confronto para este filtro.'))));
   } else {
+    // Detect if it's a round-robin (many matches in round 1, no bracket tree needed)
     var totalRounds=rds.length;
-    var brkWrap=h('div',{style:{display:'flex',gap:'0',overflowX:'auto',paddingBottom:'16px'}});
-    rds.forEach(function(rd){
-      var d=totalRounds-rd.r;
-      var rLabel=d===0?'Final':d===1?'Semi':d===2?'Quartas':'Fase '+rd.r;
-      var col=h('div',{style:{minWidth:'200px',flex:'1',padding:'0 8px'}});
-      col.appendChild(h('div',{style:{textAlign:'center',fontSize:'11px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'12px',paddingBottom:'6px',borderBottom:'1px solid var(--br)'}},rLabel));
-      rd.m.forEach(function(m){
-        var can=(S.role==='admin'||S.role==='judge')&&m.t1&&m.t2&&m.t1.indexOf('PH_')!==0&&m.t2.indexOf('PH_')!==0&&!m.t1.startsWith('W_')&&!m.t2.startsWith('W_');
-        var lc=m.lc?h('div',{style:{fontSize:'9px',color:'var(--tx3)',textAlign:'center',marginBottom:'2px'}},m.lc):null;
-        var hora=m._hora?h('div',{style:{fontSize:'9px',color:'var(--tx3)',textAlign:'center',marginBottom:'4px'}},m._hora):null;
+    var isRobin=rds[0]&&rds[0].m&&rds[0].m.length>4;
 
-        function teamBox(tid,score,won,wo){
-          var nm=tName(tid);
-          var isBye=!tid||tid==='BYE'||tid.indexOf('PH_')===0;
-          var bg=isBye?'transparent':won?'rgba(52,211,153,.15)':wo?'rgba(248,113,113,.12)':'var(--c3)';
-          var bd=won?'var(--gn)':wo?'var(--rd)':'var(--br)';
-          return h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 8px',background:bg,border:'1px solid '+bd,borderRadius:'6px',marginBottom:'3px',minHeight:'32px'}},
-            h('span',{style:{fontSize:'12px',fontWeight:won?'700':'400',color:isBye?'var(--tx3)':'var(--tx)',flex:'1',overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}},isBye?'—':nm),
-            score!=null?h('span',{style:{fontSize:'13px',fontWeight:'700',color:won?'var(--gn)':'var(--tx)',minWidth:'20px',textAlign:'right'}},score+''):null
-          );
+    if(isRobin||totalRounds===1){
+      // Show as list view (rodizio style)
+      var allMatches=[];rds.forEach(function(rd){rd.m.forEach(function(m){allMatches.push({m:m,rd:rd.r})})});
+      var tbl=h('div',{'class':'card'});
+      var hdr=h('div',{style:{display:'grid',gridTemplateColumns:'40px 1fr 100px',gap:'8px',padding:'6px 12px',fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',borderBottom:'1px solid var(--br)'}});
+      hdr.appendChild(h('span',{},'#'));
+      hdr.appendChild(h('span',{},'Confronto'));
+      hdr.appendChild(h('span',{style:{textAlign:'center'}},'Resultado'));
+      tbl.appendChild(hdr);
+      var tbody=h('div',{style:{maxHeight:'460px',overflowY:'auto'}});
+      allMatches.forEach(function(item,idx){
+        var m=item.m;
+        var n1=tName(m.t1),n2=tName(m.t2);
+        var isPH1=!m.t1||m.t1.indexOf('PH_')===0,isPH2=!m.t2||m.t2.indexOf('PH_')===0;
+        if(isPH1&&isPH2)return;
+        var hasRes=m.s1!=null||m.s2!=null;
+        var can=(S.role==='admin'||S.role==='judge')&&!isPH1&&!isPH2;
+        var row=h('div',{
+          style:{display:'grid',gridTemplateColumns:'40px 1fr 100px',gap:'8px',padding:'8px 12px',borderBottom:'1px solid var(--br)',cursor:can?'pointer':'default',background:hasRes?'rgba(52,211,153,.04)':''},
+          onclick:can?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null
+        });
+        row.appendChild(h('span',{style:{fontSize:'11px',color:'var(--tx3)'}},''+( idx+1)));
+        var teams=h('div',{style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px'}});
+        // Team color dot helper
+        function colorDot(nm){
+          var TEAM_COLORS={'ROXO':'#8b5cf6','VERDE':'#22c55e','VERMELHO':'#ef4444','AMARELO':'#eab308','AZUL':'#3b82f6','ROSA':'#ec4899','PRETO':'#374151','BRANCO':'#e2e8f0','CINZA':'#6b7280','LARANJA':'#f97316'};
+          var col='var(--tx3)';var up=(nm||'').toUpperCase();
+          Object.entries(TEAM_COLORS).forEach(function(e){if(up.indexOf(e[0])>=0)col=e[1]});
+          return h('span',{style:{width:'8px',height:'8px',borderRadius:'50%',background:col,flexShrink:'0',display:'inline-block'}});
         }
-
-        var t1won=m.w===m.t1,t2won=m.w===m.t2;
-        var wo1=m.wo1,wo2=m.wo2;
-        var matchCard=h('div',{style:{marginBottom:'10px',cursor:can?'pointer':'default',borderRadius:'8px',padding:'2px',background:can?'transparent':'transparent'},
-          onclick:can?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null});
-        if(hora)matchCard.appendChild(hora);
-        if(lc)matchCard.appendChild(lc);
-        matchCard.appendChild(teamBox(m.t1,m.s1,t1won,wo1));
-        matchCard.appendChild(teamBox(m.t2,m.s2,t2won,wo2));
-        col.appendChild(matchCard);
+        var t1Span=h('span',{style:{fontWeight:'500',display:'flex',alignItems:'center',gap:'4px'}},colorDot(n1),n1);
+        var t2Span=h('span',{style:{fontWeight:'500',display:'flex',alignItems:'center',gap:'4px'}},colorDot(n2),n2);
+        teams.appendChild(t1Span);
+        teams.appendChild(h('span',{style:{color:'var(--tx3)',fontSize:'11px'}},'x'));
+        teams.appendChild(t2Span);
+        // Local/hora
+        var meta=[];
+        if(m._hora)meta.push(m._hora);
+        if(m.lc)meta.push(m.lc);
+        if(meta.length)teams.appendChild(h('span',{style:{fontSize:'10px',color:'var(--tx3)',marginLeft:'8px'}},meta.join(' ')));
+        row.appendChild(teams);
+        var res=h('div',{style:{textAlign:'center',fontSize:'13px',fontWeight:'700',color:hasRes?'var(--gn)':'var(--tx3)'}});
+        if(hasRes)res.innerHTML=(m.s1!=null?m.s1:'?')+' x '+(m.s2!=null?m.s2:'?');
+        else res.innerHTML='<span style="font-size:10px">—</span>';
+        row.appendChild(res);
+        tbody.appendChild(row);
       });
-      brkWrap.appendChild(col);
-    });
-    c.appendChild(brkWrap);
+      tbl.appendChild(tbody);
+      main.appendChild(tbl);
+    } else {
+      // Show as bracket tree (eliminatoria)
+      var brkWrap=h('div',{style:{display:'flex',gap:'0',overflowX:'auto',paddingBottom:'16px'}});
+      rds.forEach(function(rd){
+        var d=totalRounds-rd.r;
+        var rLabel=rd.r===1&&totalRounds===1?'Final':d===0?'Final':d===1?'Semifinal':d===2?'Quartas':'Fase '+rd.r;
+        var col=h('div',{style:{minWidth:'210px',flex:'1',padding:'0 10px'}});
+        col.appendChild(h('div',{style:{textAlign:'center',fontSize:'11px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'12px',paddingBottom:'6px',borderBottom:'1px solid var(--br)'}},rLabel));
+        rd.m.forEach(function(m){
+          var n1=tName(m.t1),n2=tName(m.t2);
+          var isPH1=!m.t1||m.t1.indexOf('PH_')===0,isPH2=!m.t2||m.t2.indexOf('PH_')===0;
+          var can=(S.role==='admin'||S.role==='judge')&&!isPH1&&!isPH2;
+          var hasRes=m.s1!=null||m.s2!=null;
+          // Color dot
+          function cdot(nm){
+            var TEAM_COLORS={'ROXO':'#8b5cf6','VERDE':'#22c55e','VERMELHO':'#ef4444','AMARELO':'#eab308','AZUL':'#3b82f6','ROSA':'#ec4899','PRETO':'#374151','BRANCO':'#e2e8f0','CINZA':'#6b7280','LARANJA':'#f97316'};
+            var col='var(--tx3)';var up=(nm||'').toUpperCase();
+            Object.entries(TEAM_COLORS).forEach(function(e){if(up.indexOf(e[0])>=0)col=e[1]});
+            return h('span',{style:{width:'8px',height:'8px',borderRadius:'50%',background:col,display:'inline-block',flexShrink:'0',marginRight:'5px'}});
+          }
+          function tRow(tid,nm,isWin,isWO){
+            var isBye=isPH1||isPH2||nm==='—';
+            return h('div',{style:{display:'flex',alignItems:'center',padding:'6px 8px',borderRadius:'6px',marginBottom:'3px',background:isBye?'transparent':isWin?'rgba(52,211,153,.15)':isWO?'rgba(248,113,113,.12)':'var(--c3)',border:'1px solid '+(isWin?'var(--gn)':isWO?'var(--rd)':'var(--br)')}},
+              cdot(nm),
+              h('span',{style:{flex:'1',fontSize:'12px',fontWeight:isWin?'700':'400',color:isBye?'var(--tx3)':'var(--tx)',overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}},isBye?'—':nm)
+            );
+          }
+          var mc=h('div',{style:{marginBottom:'12px',cursor:can?'pointer':'default'},onclick:can?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null});
+          if(m._hora||m.lc)mc.appendChild(h('div',{style:{fontSize:'9px',color:'var(--tx3)',marginBottom:'2px',paddingLeft:'2px'}},[m._hora,m.lc].filter(Boolean).join(' ')));
+          mc.appendChild(tRow(m.t1,n1,m.w===m.t1,m.wo1));
+          mc.appendChild(tRow(m.t2,n2,m.w===m.t2,m.wo2));
+          col.appendChild(mc);
+        });
+        brkWrap.appendChild(col);
+      });
+      main.appendChild(brkWrap);
+    }
   }
 
-  // ── PLAYER LIST ───────────────────────────────────────────────────────
+  wrap.appendChild(main);
+  c.appendChild(wrap);
+
+  // Player list
   if(tms.length){
     var plDiv=h('div',{'class':'card',style:{marginTop:'16px'}});
     plDiv.appendChild(h('div',{'class':'card-h'},h('div',{'class':'card-t'},'Equipes inscritas')));
@@ -1783,7 +1863,7 @@ function pB(c){
     c.appendChild(plDiv);
   }
 
-  // ── MODALS ────────────────────────────────────────────────────────────
+  // Modals
   if(S.mod&&S.mod.tp==='autoSch')mAutoSch(c);
 }
 function pSc(c){
