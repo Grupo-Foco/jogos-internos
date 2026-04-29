@@ -1255,6 +1255,17 @@ function R(){
   root.appendChild(mainDiv);
   root.appendChild(bnav);
   if(S.mod&&S.mod.tp==='settings')mSettings(root);
+  if(S.mod&&S.mod.tp==='result'){
+    // Find the match object from brk using mid+bk+ct
+    var _bk=S.mod.bk,_ct=S.mod.ct,_mid=S.mod.mid;
+    var _rds=S.brk[_bk]&&S.brk[_bk][_ct]?S.brk[_bk][_ct]:[];
+    var _m=null;_rds.forEach(function(rd){rd.m.forEach(function(mx){if(mx.id===_mid)_m=mx})});
+    if(_m){
+      // Translate to mRes format: S.mod.m and S.mod.si
+      S.mod.m=_m;S.mod.si=_bk;
+      mRes(root);
+    }
+  }
   // Auto-save to Supabase on state change (but not during modals to prevent input loss)
   if(!S.mod)scheduleSave();
 }
@@ -1643,15 +1654,33 @@ function pB(c){
     return;
   }
 
-  // Unique sports, genders, series
-  var uniqueSports=[...new Set(brkMeta.map(function(m){return m.spId}))];
-  if(!S.bs||uniqueSports.indexOf(S.bs)<0)S.bs=uniqueSports[0];
+  // Build sport BASE NAME map (FUTEBOL, QUEIMADA, etc.) -> list of {spId, gender}
+  var spBaseMap={};  // baseName -> [{spId, gender}]
+  brkMeta.forEach(function(m){
+    var sp=S.spt.find(function(s){return s.id===m.spId});
+    var base=(sp&&sp.nm)||m.spNm||m.spId;
+    if(!spBaseMap[base])spBaseMap[base]=[];
+    if(!spBaseMap[base].find(function(x){return x.spId===m.spId&&x.gender===m.gender}))
+      spBaseMap[base].push({spId:m.spId,gender:m.gender});
+  });
+  var uniqueSpBases=Object.keys(spBaseMap).sort();
 
-  var gendersForSport=[...new Set(brkMeta.filter(function(m){return m.spId===S.bs}).map(function(m){return m.gender}))];
-  if(!S.bc||gendersForSport.indexOf(S.bc)<0)S.bc=gendersForSport[0]||'Masculino';
+  // S.bsb = selected sport BASE name
+  if(!S.bsb||uniqueSpBases.indexOf(S.bsb)<0)S.bsb=uniqueSpBases[0]||'';
 
-  var seriesForFilter=[...new Set(brkMeta.filter(function(m){return m.spId===S.bs&&m.gender===S.bc}).map(function(m){return m.serie}))];
-  // Sort series: numeric parts first
+  // Genders available for selected sport base
+  var gendersForBase=[...new Set((spBaseMap[S.bsb]||[]).map(function(x){return x.gender}))];
+  var gOrder={Masculino:0,Feminino:1,Misto:2};
+  gendersForBase.sort(function(a,b){return (gOrder[a]||9)-(gOrder[b]||9)});
+  if(!S.bc||gendersForBase.indexOf(S.bc)<0)S.bc=gendersForBase[0]||'Masculino';
+
+  // Find the spId for selected base+gender
+  var selectedEntry=(spBaseMap[S.bsb]||[]).find(function(x){return x.gender===S.bc});
+  var currentSpId=selectedEntry?selectedEntry.spId:(spBaseMap[S.bsb]&&spBaseMap[S.bsb][0]?spBaseMap[S.bsb][0].spId:'');
+  S.bs=currentSpId;
+
+  // Series for selected spId+gender
+  var seriesForFilter=[...new Set(brkMeta.filter(function(m){return m.spId===currentSpId&&m.gender===S.bc}).map(function(m){return m.serie}))];
   seriesForFilter.sort(function(a,b){
     var na=parseInt(a)||999,nb=parseInt(b)||999;
     if(na!==nb)return na-nb;
@@ -1659,10 +1688,10 @@ function pB(c){
   });
   if(!S.bserie||seriesForFilter.indexOf(S.bserie)<0)S.bserie=seriesForFilter[0]||'GERAL';
 
-  var bkey=S.bay+'__'+S.bs+'__'+S.bserie;
-  var tms=apYear.filter(function(e){return e.si===S.bs&&e.ct===S.bc});
+  var bkey=S.bay+'__'+currentSpId+'__'+S.bserie;
+  var tms=apYear.filter(function(e){return e.si===currentSpId&&e.ct===S.bc});
   var has3rd=!!(S.thirdPlace[bkey]&&S.thirdPlace[bkey][S.bc]);
-  var sp2=S.spt.find(function(s){return s.id===S.bs});
+  var sp2=S.spt.find(function(s){return s.id===currentSpId});
 
   // ── LAYOUT: 2 columns — left filters, right bracket ──────────────────
   var wrap=h('div',{style:{display:'flex',gap:'16px',alignItems:'flex-start',flexWrap:'wrap'}});
@@ -1671,11 +1700,12 @@ function pB(c){
   var sidebar=h('div',{style:{width:'160px',flexShrink:'0'}});
 
   // Gender filter
-  if(gendersForSport.length){
+  if(gendersForBase.length>0){
     sidebar.appendChild(h('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'4px'}},'Genero'));
     var gBox=h('div',{style:{marginBottom:'12px'}});
-    gendersForSport.forEach(function(g){
-      var gLabel={Masculino:'Masculino',Feminino:'Feminino',Misto:'Misto'}[g]||g;
+    var gIcons={Masculino:'♂',Feminino:'♀',Misto:'⚥'};
+    gendersForBase.forEach(function(g){
+      var gLabel=gIcons[g]+' '+g;
       gBox.appendChild(h('button',{
         'class':'btn btn-s',
         style:Object.assign({display:'block',width:'100%',textAlign:'left',marginBottom:'3px',fontSize:'11px'},S.bc===g?{background:'var(--pu)',color:'#fff'}:{}),
@@ -1700,16 +1730,15 @@ function pB(c){
     sidebar.appendChild(srBox);
   }
 
-  // Sport filter (scrollable)
+ // Sport filter (scrollable) - by base name
   sidebar.appendChild(h('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'4px'}},'Esporte'));
   var spBox=h('div',{style:{maxHeight:'240px',overflowY:'auto'}});
-  uniqueSports.forEach(function(si){
-    var sp=S.spt.find(function(s){return s.id===si});
+  uniqueSpBases.forEach(function(base){
     spBox.appendChild(h('button',{
       'class':'btn btn-s',
-      style:Object.assign({display:'block',width:'100%',textAlign:'left',marginBottom:'3px',fontSize:'11px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'},S.bs===si?{background:'var(--gn)',color:'#022c22'}:{}),
-      onclick:(function(id){return function(){S.bs=id;S.bserie='';S.bc='';R()}})(si)
-    },(sp&&sp.nm)||si));
+      style:Object.assign({display:'block',width:'100%',textAlign:'left',marginBottom:'3px',fontSize:'11px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'},S.bsb===base?{background:'var(--gn)',color:'#022c22'}:{}),
+      onclick:(function(b){return function(){S.bsb=b;S.bserie='';S.bc='';R()}})(base)
+    },base));
   });
   sidebar.appendChild(spBox);
 
@@ -1722,23 +1751,36 @@ function pB(c){
   if(S.role==='admin'){
     var bar=h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'14px',alignItems:'center'}});
     var hasEx=!!(S.brk[bkey]&&S.brk[bkey][S.bc]&&S.brk[bkey][S.bc].length);
+    var hasImported=hasEx&&S.brk[bkey][S.bc].some(function(rd){return rd.m&&rd.m.some(function(m){return m._hora})});
+    function confirmDestructive(cb){
+      if(hasImported){
+        var pwd=prompt('Este chaveamento foi importado.\nDigite a senha admin para confirmar:');
+        if(pwd===null)return;
+        if(pwd!==S.adminPass){alert('Senha incorreta.');return;}
+      }
+      if(!confirm('Apagar chaveamento e sortear novamente?'))return;
+      cb();
+    }
     if(tms.length>=2){
       bar.appendChild(h('button',{
         'class':'btn btn-p',
         style:hasEx?{background:'linear-gradient(135deg,#b45309,#92400e)',boxShadow:'0 0 0 2px #fbbf24'}:{},
         onclick:function(){
-          if(hasEx){if(!confirm('Apagar chaveamento existente e sortear novamente?'))return;if(!confirm('Confirmar?'))return;}
-          if(!S.brk[bkey])S.brk[bkey]={};
-          S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),has3rd);
-          scheduleSave();R();
+          confirmDestructive(function(){
+            if(!S.brk[bkey])S.brk[bkey]={};
+            S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),has3rd);
+            scheduleSave();R();
+          });
         }
       },hasEx?'Resortear':'Sortear'));
       bar.appendChild(h('button',{'class':'btn'+(has3rd?' btn-p':''),onclick:function(){
-        if(!S.thirdPlace[bkey])S.thirdPlace[bkey]={};
-        S.thirdPlace[bkey][S.bc]=!has3rd;
-        if(S.brk[bkey]&&S.brk[bkey][S.bc]&&S.brk[bkey][S.bc].length)
-          S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),!has3rd);
-        R();
+        confirmDestructive(function(){
+          if(!S.thirdPlace[bkey])S.thirdPlace[bkey]={};
+          S.thirdPlace[bkey][S.bc]=!has3rd;
+          if(S.brk[bkey]&&S.brk[bkey][S.bc]&&S.brk[bkey][S.bc].length&&tms.length>=2)
+            S.brk[bkey][S.bc]=genBracket(tms.map(function(e){return e.id}),!has3rd);
+          scheduleSave();R();
+        });
       }},has3rd?'3o Lugar: ON':'3o Lugar: OFF'));
     }
     bar.appendChild(h('button',{'class':'btn',onclick:function(){S.mod={tp:'autoSch',bkey:bkey,ct:S.bc};R()}},'Agendar Auto'));
