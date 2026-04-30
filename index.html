@@ -845,9 +845,8 @@ function _buildJimRows(rows){
     }
 
     if(hasGroups){
-      // ENS. MEDIO structure: Grupo A matches + Grupo B matches + Final (Grupo A winner vs Grupo B winner)
+      // ENS. MEDIO: Grupo A round + Grupo B round + ONE final round
       var groupKeys=Object.keys(grp.groupMatches).sort();
-      var groupLeaderIds=[];
       groupKeys.forEach(function(gk){
         var gMatches=grp.groupMatches[gk];
         var rnd={r:rounds.length+1,label:'Grupo '+gk,m:[]};
@@ -857,22 +856,17 @@ function _buildJimRows(rows){
           rnd.m.push(buildMatch(m,t1,t2,false));
         });
         rounds.push(rnd);
-        // Track group round for leader slot
-        groupLeaderIds.push({gk:gk,rnd:rnd});
       });
-      // Final: 1 match, leaders of each group advance
-      // We use a special slot: W_GROUP_A and W_GROUP_B
-      // Since each group has multiple matches, we can't use W_matchId for group leader
-      // Instead: create a virtual "group winner" slot using 'GW_' prefix
-      if(hasFinal){
-        grp.finalMatches.forEach(function(fm,fi){
-          var finalRnd={r:rounds.length+1,label:'Final',m:[]};
-          // Slot for group A leader and group B leader
-          var gwA='GW_'+groupLeaderIds[0].rnd.m.map(function(m){return m.id}).join(',');
-          var gwB=groupLeaderIds[1]?'GW_'+groupLeaderIds[1].rnd.m.map(function(m){return m.id}).join(','):('PH_'+u());
+      // Single final round containing all final + 3rd matches
+      if(hasFinal||hasThird){
+        var finalRnd={r:rounds.length+1,label:'Final',m:[]};
+        grp.finalMatches.forEach(function(fm){
           finalRnd.m.push(buildMatch(fm,'GW_A_'+bKey,'GW_B_'+bKey,false));
-          rounds.push(finalRnd);
         });
+        grp.thirdMatches.forEach(function(tm){
+          finalRnd.m.push(buildMatch(tm,'GW_A2_'+bKey,'GW_B2_'+bKey,true));
+        });
+        rounds.push(finalRnd);
       }
     } else if(hasSemis){
       // Classic semi → final (→ 3rd)
@@ -1173,6 +1167,82 @@ function tName(id){
   var cl=S.cls.find(function(x){return x.id===id});
   if(cl)return cl.nm;
   return'—';
+}
+
+function recomputeGroupWinners(bk,ct){
+  // For each bracket key, compute group/rodizio standings and update GW_ slots
+  var rds=S.brk[bk]&&S.brk[bk][ct]?S.brk[bk][ct]:[];
+  if(!rds.length)return;
+
+  // Identify rounds that are classify (no GW_/W_/L_ slots) vs final rounds
+  var classifyRounds=[],finalRounds=[];
+  rds.forEach(function(rd){
+    var hasFinalSlot=rd.m.some(function(m){
+      return (m.t1&&(m.t1.indexOf('GW_')===0||m.t1.indexOf('W_')===0||m.t1.indexOf('L_')===0))||m.is3rd;
+    });
+    if(hasFinalSlot)finalRounds.push(rd);
+    else classifyRounds.push(rd);
+  });
+
+  // Compute standings per classify round (group/rodizio)
+  // Each classify round = one group. Standings = win count then point diff
+  var groupStandings=[];
+  classifyRounds.forEach(function(rd,gi){
+    var stats={};
+    rd.m.forEach(function(m){
+      [m.t1,m.t2].forEach(function(t){
+        if(t&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0){
+          if(!stats[t])stats[t]={t:t,w:0,d:0,l:0,pts:0,gd:0,gp:0};
+        }
+      });
+      if(m.s1==null||m.s2==null)return;
+      var t1=m.t1,t2=m.t2;
+      if(!stats[t1]||!stats[t2])return;
+      stats[t1].gp+=m.s1;stats[t2].gp+=m.s2;
+      stats[t1].gd+=(m.s1-m.s2);stats[t2].gd+=(m.s2-m.s1);
+      if(m.isDraw||m.s1===m.s2){stats[t1].d++;stats[t2].d++;stats[t1].pts++;stats[t2].pts++;}
+      else if(m.w===t1){stats[t1].w++;stats[t1].pts+=3;stats[t2].l++;}
+      else if(m.w===t2){stats[t2].w++;stats[t2].pts+=3;stats[t1].l++;}
+    });
+    var sorted=Object.values(stats).sort(function(a,b){
+      return b.pts-a.pts||b.gd-a.gd||b.gp-a.gp;
+    });
+    groupStandings.push({groupIdx:gi,standings:sorted});
+  });
+
+  // Now propagate to GW_ slots. We support these slot patterns:
+  //   GW_A_<bk> = leader of group A (classifyRounds[0])
+  //   GW_B_<bk> = leader of group B (classifyRounds[1])
+  //   GW_1_<bk> = leader of single rodizio (classifyRounds[0]) - 1st place
+  //   GW_2_<bk> = 2nd place of single rodizio
+  //   GW_3_<bk>, GW_4_<bk> = 3rd, 4th places (for 3rd place match)
+  function findStandingByPos(groupIdx,pos){
+    var g=groupStandings[groupIdx];
+    if(!g||!g.standings[pos-1])return null;
+    return g.standings[pos-1].t;
+  }
+
+  finalRounds.forEach(function(rd){
+    rd.m.forEach(function(m){
+      ['t1','t2'].forEach(function(slot){
+        var s=m[slot];
+        if(!s||s.indexOf('GW_')!==0)return;
+        var match=s.match(/^GW_([A-Z0-9]+)_/);
+        if(!match)return;
+        var code=match[1];
+        var newId=null;
+        if(code==='A')newId=findStandingByPos(0,1);
+        else if(code==='B')newId=findStandingByPos(1,1);
+        else if(code==='1')newId=findStandingByPos(0,1);
+        else if(code==='2')newId=findStandingByPos(0,2);
+        else if(code==='3')newId=findStandingByPos(0,3);
+        else if(code==='4')newId=findStandingByPos(0,4);
+        if(newId)m[slot]=newId;
+      });
+    });
+  });
+
+  scheduleSave();
 }
 
 function calcRk(){
@@ -2025,8 +2095,10 @@ function pB(c){
     var isRobin=rds[0]&&rds[0].m&&rds[0].m.length>4;
     // Detect group structure: has a label with 'Grupo A'/'Grupo B' or multiple classify rounds
     var hasGroups=rds.length>1&&rds[0].label&&rds[0].label.indexOf('Grupo')>=0;
+    // Detect semi+final structure (use bracket tree)
+    var hasSemiFinal=rds.length>1&&rds[0].label&&(rds[0].label.indexOf('Semi')>=0||rds[0].label==='Semifinal');
 
-    if(isRobin||totalRounds===1||(totalRounds>1&&rds[0].m&&rds[0].m.length>3)){
+    if(!hasSemiFinal&&(isRobin||totalRounds===1||(totalRounds>1&&rds[0].m&&rds[0].m.length>3)||hasGroups)){
       // ── Separate classify rounds from final/3rd rounds ──────────────────
       var classifyRounds=[],finalRounds=[];
       rds.forEach(function(rd){
@@ -2040,9 +2112,13 @@ function pB(c){
 
       // ── Build match list from classify rounds ────────────────────────────
       var allMatches=[];
-      classifyRounds.forEach(function(rd){rd.m.forEach(function(m){allMatches.push({m:m,rdLabel:rd.label||''})})});
+      classifyRounds.forEach(function(rd){rd.m.forEach(function(m){
+        var isPH1=!m.t1||m.t1.indexOf('PH_')===0;
+        var isPH2=!m.t2||m.t2.indexOf('PH_')===0;
+        if(!(isPH1&&isPH2))allMatches.push({m:m,rdLabel:rd.label||''});
+      })});
 
-      var tbl=h('div',{'class':'card'});
+      var tbl=allMatches.length?h('div',{'class':'card'}):h('div');
       var hdr=h('div',{style:{display:'grid',gridTemplateColumns:'40px 1fr 110px',gap:'8px',padding:'6px 12px',fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',borderBottom:'1px solid var(--br)'}},
         h('span',{},'#'),h('span',{},'Confronto'),h('span',{style:{textAlign:'right'}},'Resultado'));
       tbl.appendChild(hdr);
@@ -2136,7 +2212,7 @@ function pB(c){
       var brkWrap=h('div',{style:{display:'flex',gap:'0',overflowX:'auto',paddingBottom:'16px'}});
       rds.forEach(function(rd){
         var d=totalRounds-rd.r;
-        var rLabel=rd.r===1&&totalRounds===1?'Final':d===0?'Final':d===1?'Semifinal':d===2?'Quartas':'Fase '+rd.r;
+        var rLabel=rd.label||(rd.r===1&&totalRounds===1?'Final':d===0?'Final':d===1?'Semifinal':d===2?'Quartas':'Fase '+rd.r);
         var col=h('div',{style:{minWidth:'210px',flex:'1',padding:'0 10px'}});
         col.appendChild(h('div',{style:{textAlign:'center',fontSize:'11px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'12px',paddingBottom:'6px',borderBottom:'1px solid var(--br)'}},rLabel));
         // Separate final from 3rd place matches
@@ -3010,12 +3086,21 @@ function mRes(c){
         if(v1===v2&&!_isRodizio){errDiv.style.display='block';errDiv.textContent='Empate não permitido em fase eliminatória. Defina um vencedor.';return;}
         var winner=v1===v2?null:(v1>v2?m.t1:m.t2);
         var cards={};cards[m.t1]={y:cardState.t1y,r:cardState.t1r};cards[m.t2]={y:cardState.t2y,r:cardState.t2r};
+        // Save the result
+        var loser=v1===v2?null:(winner===m.t1?m.t2:m.t1);
         S.brk[S.mod.si][S.mod.ct]=S.brk[S.mod.si][S.mod.ct].map(function(r){return Object.assign({},r,{m:r.m.map(function(x){
           if(x.id===m.id)return Object.assign({},x,{s1:v1,s2:v2,w:winner,cards:cards,isDraw:v1===v2});
-          if(x.t1==='W_'+m.id)return Object.assign({},x,{t1:winner});
-          if(x.t2==='W_'+m.id)return Object.assign({},x,{t2:winner});
+          // Propagate winner to W_matchId slots in next rounds
+          if(winner&&x.t1==='W_'+m.id)return Object.assign({},x,{t1:winner});
+          if(winner&&x.t2==='W_'+m.id)return Object.assign({},x,{t2:winner});
+          // Propagate loser to L_matchId slots (3rd place match)
+          if(loser&&x.t1==='L_'+m.id)return Object.assign({},x,{t1:loser});
+          if(loser&&x.t2==='L_'+m.id)return Object.assign({},x,{t2:loser});
           return x;
         })})});
+
+        // After saving, recompute group winners and propagate to GW_ slots
+        recomputeGroupWinners(S.mod.si,S.mod.ct);
         var cardsTxt='';
         if(cardState.t1y||cardState.t1r||cardState.t2y||cardState.t2r){
           cardsTxt=' (cartões: '+tName(m.t1)+' 🟨'+cardState.t1y+' 🟥'+cardState.t1r+', '+tName(m.t2)+' 🟨'+cardState.t2y+' 🟥'+cardState.t2r+')';
@@ -5191,6 +5276,15 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
       S.enr.forEach(function(e){e.tn=uc(e.tn)});
       var nFixed=autoFixTeamNames();
       if(nFixed>0)console.log('autoFixTeamNames: corrected '+nFixed+' team name(s)');
+      // Recompute group winners for all imported brackets (propagate GW_ slots)
+      try{
+        Object.entries(S.brk).forEach(function(bke){
+          var bk=bke[0],cts=bke[1];
+          Object.keys(cts).forEach(function(ct){
+            try{recomputeGroupWinners(bk,ct)}catch(e){}
+          });
+        });
+      }catch(e){console.warn('recomputeGroupWinners on load:',e)}
     }
     if(ok){R()}else{R()} // Render either way after load attempt
     // Check if school is active
