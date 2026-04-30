@@ -130,10 +130,10 @@ tr:last-child td{border-bottom:0}
   box-shadow:0 -4px 24px rgba(0,0,0,.25)}
 .bnav-inner{display:flex;align-items:stretch;justify-content:space-around;
   scrollbar-width:none;gap:0}
-.bnav-inner::-webkit-scrollbar{width:4px;height:4px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:rgba(100,116,139,.25);border-radius:8px;border:1px solid transparent}
-::-webkit-scrollbar-thumb:hover{background:rgba(100,116,139,.5)}
+.bnav-inner::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:rgba(0,0,0,.1);border-radius:8px}
+::-webkit-scrollbar-thumb{background:rgba(100,116,139,.5);border-radius:8px}
+::-webkit-scrollbar-thumb:hover{background:rgba(100,116,139,.75)}
 /* Hide scrollbar on bottom nav */
 .bnav ::-webkit-scrollbar{display:none}
 /* Thin scrollbar for filter panels */
@@ -818,8 +818,22 @@ function _buildJimRows(rows){
         var t1id, t2id;
         if(i>0&&prevRoundMatches.length>0){
           // Each final/semi slot comes from 2 prev matches (t1 from match 2*mi, t2 from match 2*mi+1)
-          // For 3rd place: t1 = loser of match 2*mi, t2 = loser of 2*mi+1
-          var src1Idx=mi*2, src2Idx=mi*2+1;
+          // Split fn=3 matches: finals use winner slots, 3rd place uses loser slots
+          // All finals come from ALL semis: final[0] gets winners of semi[0] & semi[1]
+          // 3rd place match gets losers of semi[0] & semi[1]
+          // So both final and 3rd place point to the SAME semi matches
+          var nSemis=prevRoundMatches.length; // e.g. 2 semis
+          var nFinals=rawMatches.filter(function(rm){
+            var fase2=(rm.fase||'').toUpperCase();
+            return !(fase2.indexOf('3')>=0&&(fase2.indexOf('LUGAR')>=0||fase2.indexOf('3O')>=0||fase2.indexOf('DISPUTA')>=0));
+          }).length;
+          // For the final (mi < nFinals), use winners of semis
+          // For 3rd place (mi >= nFinals), use losers of semis
+          var src1Idx=is3rd?0:mi*2;
+          var src2Idx=is3rd?1:mi*2+1;
+          // Cap to available semis
+          if(src1Idx>=nSemis)src1Idx=0;
+          if(src2Idx>=nSemis)src2Idx=Math.min(1,nSemis-1);
           var src1=prevRoundMatches[src1Idx];
           var src2=prevRoundMatches[src2Idx];
           if(is3rd){
@@ -1242,6 +1256,8 @@ function h(tag,attrs){
 
 function R(){
   var root=document.getElementById('app');
+  // Save scroll position before re-render to prevent scroll-to-top bug
+  var _scrollY=window.scrollY||document.documentElement.scrollTop||0;
   root.innerHTML='';
   document.body.className=S.theme==='light'?'light':'';
 
@@ -1390,6 +1406,8 @@ function R(){
   }
   // Auto-save to Supabase on state change (but not during modals to prevent input loss)
   if(!S.mod)scheduleSave();
+  // Restore scroll position after re-render
+  if(_scrollY>0)requestAnimationFrame(function(){window.scrollTo(0,_scrollY);});
 }
 
 function pD(c){
@@ -1987,7 +2005,18 @@ function pB(c){
         var rLabel=rd.r===1&&totalRounds===1?'Final':d===0?'Final':d===1?'Semifinal':d===2?'Quartas':'Fase '+rd.r;
         var col=h('div',{style:{minWidth:'210px',flex:'1',padding:'0 10px'}});
         col.appendChild(h('div',{style:{textAlign:'center',fontSize:'11px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'12px',paddingBottom:'6px',borderBottom:'1px solid var(--br)'}},rLabel));
-        rd.m.forEach(function(m){
+        // Separate final from 3rd place matches
+        var finalMatches=rd.m.filter(function(m){return!m.is3rd});
+        var thirdMatches=rd.m.filter(function(m){return m.is3rd});
+        var allToRender=finalMatches.concat(
+          thirdMatches.length?[{_separator:true,label:'3º Lugar'}]:[],
+          thirdMatches
+        );
+        allToRender.forEach(function(m){
+          if(m._separator){
+            col.appendChild(h('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--am)',textTransform:'uppercase',letterSpacing:'.08em',margin:'12px 0 8px',paddingTop:'10px',borderTop:'1px solid rgba(251,191,36,.3)',textAlign:'center'}},m.label));
+            return;
+          }
           var n1=tName(m.t1),n2=tName(m.t2);
           var isPH1=!m.t1||m.t1.indexOf('PH_')===0,isPH2=!m.t2||m.t2.indexOf('PH_')===0;
           var can=(S.role==='admin'||S.role==='judge')&&!isPH1&&!isPH2;
@@ -2028,7 +2057,7 @@ function pB(c){
           mc.appendChild(tRow(m.t1,dn1,t1win,t1wo,score1));
           mc.appendChild(tRow(m.t2,dn2,t2win,t2wo,score2));
           col.appendChild(mc);
-        });
+        });  // end allToRender.forEach
         brkWrap.appendChild(col);
       });
       main.appendChild(brkWrap);
@@ -2128,11 +2157,19 @@ function pR(c){
 
   // Extract unique series from turma names for filter
   var seriesInRk=[...new Set(crF.map(function(r){
-    var nm=(r.nm||'').toUpperCase();
-    // Extract series prefix: "8º ANO", "1º ANO", "ENS. MÉDIO" etc.
-    var m=nm.match(/^(\d+[\u00baº]?\s*ANO|ENS\.?\s*M[EÉ]DIO|\d+[\u00baª]?\s*S[EÉ]RIE)/);
+    var nm=(r.nm||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
+    // Match "8º ANO VERDE" → "8º ANO", "3º VERMELHO" → "3º", "ENS. MÉDIO ..." → "ENS. MÉDIO"
+    // Priority: full "Xº ANO", then "ENS. MÉDIO", then "Xª SÉRIE", then bare "Xº"
+    var m=nm.match(/^(\d+[\u00ba]?\s*ANO)/)||
+          nm.match(/^(ENS\.?\s*M[EÉ]DIO)/i)||
+          nm.match(/^(\d+[\u00baª]?[\u00ba]?\s*S[ÉE]RIE)/)||
+          nm.match(/^(\d+[\u00ba]?)/);
     return m?m[1].trim():'OUTROS';
-  }))].sort(function(a,b){var na=parseInt(a)||999,nb=parseInt(b)||999;return na-nb||a.localeCompare(b,'pt')});
+  }))].sort(function(a,b){
+    function sr(s){if(/ENS/i.test(s))return 100;return parseInt(s)||99}
+    var na=sr(a),nb=sr(b);
+    return na!==nb?na-nb:a.localeCompare(b,'pt');
+  });
   if(!S.rkSerie)S.rkSerie='';
   if(seriesInRk.length>1){
     var stabs=h('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'10px'}});
@@ -2143,9 +2180,17 @@ function pR(c){
     c.appendChild(stabs);
     // Filter crF and rkF by selected serie
     if(S.rkSerie){
-      var srFilter=function(r){return (r.nm||'').toUpperCase().indexOf(S.rkSerie)===0};
+      var srFilter=function(r){
+        var nm=(r.nm||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
+        var sr=S.rkSerie.replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
+        return nm.indexOf(sr)===0;
+      };
       crF=crF.filter(srFilter);
-      rkF=rkF.filter(srFilter);
+      rkF=rkF.filter(function(r){
+        var nm=(r.cn||r.tn||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
+        var sr=S.rkSerie.replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
+        return nm.indexOf(sr)===0;
+      });
     }
   }
   c.appendChild(h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px',flexWrap:'wrap',gap:'8px'}},
@@ -2185,7 +2230,11 @@ function pR(c){
           ));
         });
         if(!detail.lines.length)detailDiv.appendChild(h('div',{style:{color:'var(--tx3)',fontStyle:'italic'}},'Sem pontuação detalhada'));
-        detailDiv.appendChild(h('div',{style:{marginTop:'6px',fontWeight:'700',textAlign:'right',fontSize:'12px',color:'var(--pr)'}},'Total: '+r.p+' pts'));
+        var lineSum=detail.lines.reduce(function(acc,l){return acc+(l.pts||0)},0);
+        var discrepancy=r.p-lineSum;
+        detailDiv.appendChild(h('div',{style:{marginTop:'6px',fontWeight:'700',textAlign:'right',fontSize:'12px',color:'var(--pr)',borderTop:'1px solid var(--bd)',paddingTop:'6px'}},
+          'Total: '+r.p+' pts'+(discrepancy&&Math.abs(discrepancy)>0.1?' ('+lineSum+' detalhado + '+discrepancy.toFixed(0)+' outros)':'')
+        ));
         row.appendChild(detailDiv);
       }
       body.appendChild(row);
@@ -2199,6 +2248,11 @@ function pR(c){
 // Calculate detailed point breakdown per class
 function calcClassDetail(classId){
   var sc=S.scoring||{p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1,pWin:3,pWO:-2};
+  // Helper: get position pts from new positions array or old p1..p8
+  function pospts(rank){
+    if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;
+    return sc['p'+rank]||0;
+  }
   var lines=[];
   var totalWins=0,totalWO=0;
 
@@ -2237,7 +2291,7 @@ function calcClassDetail(classId){
       })});
       if(wins>0){
         var key=spName+' '+ct;
-        lines.push({desc:'⚽ <b>'+key+'</b> — '+wins+' vitória(s)',pts:wins*(sc.pWin||0)});
+        var winPts=wins*(sc.pWin!=null?sc.pWin:3);if(winPts!==0||wins>0)lines.push({desc:'⚽ <b>'+key+'</b> — '+wins+' vitória(s) × '+(sc.pWin!=null?sc.pWin:3)+' pts',pts:winPts});
         totalWins+=wins;
       }
       if(wos>0){
@@ -2252,10 +2306,13 @@ function calcClassDetail(classId){
           var thirdM=finalRound.m.find(function(m){return m.is3rd});
           if(finalM&&finalM.w){
             var checkPos=function(teamId,pos,label){
+              if(!teamId||teamId==='BYE'||teamId.indexOf('W_')===0||teamId.indexOf('L_')===0||teamId.indexOf('PH_')===0)return;
+              // Try enr id, then direct turma id (imported brackets)
               var te=S.enr.find(function(e){return e.id===teamId});
-              if(te&&te.ci===classId&&teamId!=='BYE'&&teamId.indexOf('W_')!==0&&teamId.indexOf('L_')!==0){
-                var pk='p'+pos;
-                if(sc[pk])lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+label,pts:sc[pk]});
+              var isOurClass=te?te.ci===classId:teamId===classId;
+              if(isOurClass){
+                var pts=pospts(pos);
+                if(pts)lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+label,pts:pts});
               }
             };
             checkPos(finalM.w,1,'1º Lugar');
@@ -2264,10 +2321,12 @@ function calcClassDetail(classId){
           }
           if(thirdM&&thirdM.w){
             var checkPos3=function(teamId,pos,label){
+              if(!teamId||teamId==='BYE'||teamId.indexOf('W_')===0||teamId.indexOf('L_')===0||teamId.indexOf('PH_')===0)return;
               var te=S.enr.find(function(e){return e.id===teamId});
-              if(te&&te.ci===classId&&teamId!=='BYE'&&teamId.indexOf('L_')!==0){
-                var pk='p'+pos;
-                if(sc[pk])lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+label,pts:sc[pk]});
+              var isOurClass=te?te.ci===classId:teamId===classId;
+              if(isOurClass){
+                var pts=pospts(pos);
+                if(pts)lines.push({desc:'🥉 <b>'+spName+' '+ct+'</b> — '+label,pts:pts});
               }
             };
             checkPos3(thirdM.w,3,'3º Lugar');
