@@ -1193,10 +1193,8 @@ function calcCR(){
   var rk=calcRk(),pts={};
   rk.forEach(function(x){
     if(x.ci){
-      if(!pts[x.ci])pts[x.ci]={p:0,nm:x.cn,yr:x.yr};
-      pts[x.ci].p+=x.p;
-      pts[x.ci].nm=pts[x.ci].nm||x.cn;
-      pts[x.ci].yr=pts[x.ci].yr||x.yr;
+      if(!pts[x.ci])pts[x.ci]=0;
+      pts[x.ci]+=x.p;
     }
   });
   // Add podium points (individual sports) p1-p8
@@ -1994,17 +1992,34 @@ function pB(c){
             Object.entries(TEAM_COLORS).forEach(function(e){if(up.indexOf(e[0])>=0)col=e[1]});
             return h('span',{style:{width:'8px',height:'8px',borderRadius:'50%',background:col,display:'inline-block',flexShrink:'0',marginRight:'5px'}});
           }
-          function tRow(tid,nm,isWin,isWO){
-            var isBye=isPH1||isPH2||nm==='—';
-            return h('div',{style:{display:'flex',alignItems:'center',padding:'6px 8px',borderRadius:'6px',marginBottom:'3px',background:isBye?'transparent':isWin?'rgba(52,211,153,.15)':isWO?'rgba(248,113,113,.12)':'var(--c3)',border:'1px solid '+(isWin?'var(--gn)':isWO?'var(--rd)':'var(--br)')}},
+          function tRow(tid,nm,isWin,isWO,score){
+            var isBye=!nm||nm==='—'||nm==='A definir';
+            return h('div',{style:{display:'flex',alignItems:'center',padding:'7px 10px',borderRadius:'7px',marginBottom:'3px',
+              background:isBye?'transparent':isWin?'rgba(52,211,153,.15)':isWO?'rgba(248,113,113,.12)':'var(--c3)',
+              border:'1px solid '+(isWin?'var(--gn)':isWO?'var(--rd)':'var(--br)')}},
               cdot(nm),
-              h('span',{style:{flex:'1',fontSize:'12px',fontWeight:isWin?'700':'400',color:isBye?'var(--tx3)':'var(--tx)',overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}},isBye?'—':nm)
+              h('span',{style:{flex:'1',fontSize:'13px',fontWeight:isWin?'700':'400',color:isBye?'var(--tx3)':'var(--tx)',overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}},isBye?'—':nm),
+              score!=null?h('span',{style:{fontFamily:"'Space Mono'",fontSize:'15px',fontWeight:'800',color:isWin?'var(--gn)':'var(--tx)',minWidth:'22px',textAlign:'right',marginLeft:'8px'}},''+score):null
             );
           }
-          var mc=h('div',{style:{marginBottom:'12px',cursor:can?'pointer':'default'},onclick:can?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null});
-          if(m._hora||m.lc)mc.appendChild(h('div',{style:{fontSize:'9px',color:'var(--tx3)',marginBottom:'2px',paddingLeft:'2px'}},[m._hora,m.lc].filter(Boolean).join(' ')));
-          mc.appendChild(tRow(m.t1,n1,m.w===m.t1,m.wo1));
-          mc.appendChild(tRow(m.t2,n2,m.w===m.t2,m.wo2));
+          // Resolve display names — W_ and L_ slots
+          var dn1=n1,dn2=n2;
+          if(!m.t1||m.t1.indexOf('PH_')===0)dn1='A definir';
+          if(!m.t2||m.t2.indexOf('PH_')===0)dn2='A definir';
+          var t1win=m.w&&m.w===m.t1,t2win=m.w&&m.w===m.t2;
+          var t1wo=m.wo===m.t1,t2wo=m.wo===m.t2;
+          var score1=m.s1!=null?m.s1:null,score2=m.s2!=null?m.s2:null;
+          // Allow click if both slots have a resolved team (not PH_ or W_ unresolved)
+          var t1ready=m.t1&&m.t1.indexOf('PH_')!==0;
+          var t2ready=m.t2&&m.t2.indexOf('PH_')!==0;
+          var canClick=(S.role==='admin'||S.role==='judge')&&t1ready&&t2ready;
+          var mc=h('div',{style:{marginBottom:'14px',cursor:canClick?'pointer':'default',borderRadius:'10px',overflow:'hidden',border:'1px solid var(--br)'},onclick:canClick?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null});
+          if(m._hora||m.lc)mc.appendChild(h('div',{style:{fontSize:'10px',color:'var(--tx3)',padding:'4px 10px',background:'var(--c2)',borderBottom:'1px solid var(--br)'}},
+            h('span',{style:{fontWeight:'600'}},m._hora||''),
+            m.lc?h('span',{style:{marginLeft:'6px',opacity:'.7'}},m.lc):null
+          ));
+          mc.appendChild(tRow(m.t1,dn1,t1win,t1wo,score1));
+          mc.appendChild(tRow(m.t2,dn2,t2win,t2wo,score2));
           col.appendChild(mc);
         });
         brkWrap.appendChild(col);
@@ -2101,9 +2116,31 @@ function pR(c){
     anos.forEach(function(a){ytabs.appendChild(h('button',{'class':'tab'+(S.bay===a?' active':''),onclick:(function(y){return function(){S.bay=y;R()}})(a)},a))});
     c.appendChild(ytabs);
   }
-  var rkF=S.bay?rk.filter(function(r){var e=S.enr.find(function(z){return z.id===r.id});var cl=e&&S.cls.find(function(x){return x.id===e.ci});return cl&&cl.yr===S.bay}):rk;
-  var crF=S.bay?cr.filter(function(r){var cl=S.cls.find(function(x){return x.id===r.id});return cl&&cl.yr===S.bay}):cr;
+  var rkF=S.bay?rk.filter(function(r){var nY=function(y){return(y||'').replace(/[\u00b0\u00ba]/g,'\u00ba').replace(/\s+/g,' ').trim().toUpperCase()};return nY(r.yr)===nY(S.bay)}):rk;
+  var crF=S.bay?cr.filter(function(r){var nY=function(y){return(y||'').replace(/[\u00b0\u00ba]/g,'\u00ba').replace(/\s+/g,' ').trim().toUpperCase()};return nY(r.yr)===nY(S.bay)}):cr;
 
+  // Extract unique series from turma names for filter
+  var seriesInRk=[...new Set(crF.map(function(r){
+    var nm=(r.nm||'').toUpperCase();
+    // Extract series prefix: "8º ANO", "1º ANO", "ENS. MÉDIO" etc.
+    var m=nm.match(/^(\d+[\u00baº]?\s*ANO|ENS\.?\s*M[EÉ]DIO|\d+[\u00baª]?\s*S[EÉ]RIE)/);
+    return m?m[1].trim():'OUTROS';
+  }))].sort(function(a,b){var na=parseInt(a)||999,nb=parseInt(b)||999;return na-nb||a.localeCompare(b,'pt')});
+  if(!S.rkSerie)S.rkSerie='';
+  if(seriesInRk.length>1){
+    var stabs=h('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'10px'}});
+    stabs.appendChild(h('button',{'class':'btn btn-s'+(S.rkSerie===''?' btn-p':''),onclick:function(){S.rkSerie='';R()}},'Todas'));
+    seriesInRk.forEach(function(sr){
+      stabs.appendChild(h('button',{'class':'btn btn-s'+(S.rkSerie===sr?' btn-p':''),style:{fontSize:'11px'},onclick:(function(s){return function(){S.rkSerie=s;R()}})(sr)},sr));
+    });
+    c.appendChild(stabs);
+    // Filter crF and rkF by selected serie
+    if(S.rkSerie){
+      var srFilter=function(r){return (r.nm||'').toUpperCase().indexOf(S.rkSerie)===0};
+      crF=crF.filter(srFilter);
+      rkF=rkF.filter(srFilter);
+    }
+  }
   c.appendChild(h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px',flexWrap:'wrap',gap:'8px'}},
     h('div',{'class':'tabs',style:{marginBottom:'0'}},
       h('button',{'class':'tab'+(S.rt==='class'?' active':''),onclick:function(){S.rt='class';R()}},'Turmas'),
