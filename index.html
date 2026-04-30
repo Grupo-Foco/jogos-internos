@@ -731,143 +731,195 @@ function parseJimHtmlForBrackets(htmlText){
 }
 function _buildJimRows(rows){
   function u(){return Math.random().toString(36).slice(2,9)}
+  function nrm(s){return(s||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase()}
   function isPH(e){
     if(!e)return true;
-    var up=(e+'').toUpperCase().trim();
-    // Explicit placeholders
-    if(['VENC.','PERD.','A DEFINIR','BYE','1º LUGAR','2º LUGAR','1o LUGAR','2o LUGAR'].some(function(p){return up.indexOf(p)>=0}))return true;
-    // Bare series like "6º ANO" / "6o ANO" with no color
+    var up=nrm(e);
+    if(['VENC.','PERD.','A DEFINIR','BYE','LUGAR','W_','L_'].some(function(p){return up.indexOf(p)>=0}))return true;
     if(/^\d+[\u00ba\u00b0o]?\s*ANO\s*$/.test(up))return true;
-    // Series like "6º SERIE" alone (without color) = placeholder, but "ENS. MÉDIO" is valid
-    if(/^\d+[\u00ba\u00b0o]?\s*S[EE]RIE?\s*$/.test(up)&&up.indexOf('MEDIO')<0&&up.indexOf('ENS')<0)return true;
+    if(/^\d+[\u00ba\u00b0o]?\s*SERIE?\s*$/.test(up))return true;
     return false;
   }
   function normModal(m){
-    var s=(m+'').toUpperCase().trim();
+    var s=nrm(m);
     var g='Misto';
     if(/\bMASC\b/.test(s))g='Masculino';
     else if(/\bFEM\b/.test(s))g='Feminino';
     var base=s.replace(/\s*(MASC|FEM|MISTO|MASCULINO|FEMININO)\b/gi,'').trim();
-    return{base:base,gender:g,full:(m+'').trim()};
+    return{base:base,gender:g};
   }
 
   var sptSet={},locsSet={},turmasSet={};
   rows.forEach(function(r){
     if(r.local)locsSet[r.local.trim()]=true;
     var nm=normModal(r.modal);
-    // Sport key: just modal base + gender (no series) for sport catalog
     var spKey=nm.base+'|'+nm.gender;
-    if(!sptSet[spKey])sptSet[spKey]={base:nm.base,gender:nm.gender,full:nm.full,id:u()};
+    if(!sptSet[spKey])sptSet[spKey]={base:nm.base,gender:nm.gender,id:u()};
     [r.e1,r.e2].forEach(function(e){
       if(e&&!isPH(e)){
-        var ek=(e+'').trim().toUpperCase();
-        if(!turmasSet[ek])turmasSet[ek]={nm:(e+'').trim(),id:u()};
+        var ek=nrm(e);
+        if(!turmasSet[ek])turmasSet[ek]={nm:e.trim(),id:u()};
       }
     });
   });
 
-  // Group matches by (sport + serie + gender) = one bracket per competition
-  // Use r.serie (index 10 in RAW, passed as r.serie) if available
+  // ── Group matches by bracket key AND sub-group ───────────────────────
+  // fase strings: '', 'RODIZIO', 'GRUPO A', 'GRUPO B', 'SEMIFINAL', 'FINAL Xº ANO',
+  //               '3º LUGAR Xº ANO', 'FINAL ENS. MEDIO'
   var brkGroups={};
   rows.forEach(function(r){
     var nm=normModal(r.modal);
     var spKey=nm.base+'|'+nm.gender;
-    var sp=sptSet[spKey];if(!sp)return;
-    var serie=(r.serie||'').trim().replace(/[\u00b0\u00ba]/g,'\u00ba').toUpperCase()||'GERAL';
-    // Bracket key = sportId + serie + gender
+    var sp=sptSet[spKey]; if(!sp)return;
+    var serie=nrm(r.serie||'')||'GERAL';
     var bKey=sp.id+'|'+serie+'|'+nm.gender;
-    if(!brkGroups[bKey])brkGroups[bKey]={sp:sp,gender:nm.gender,serie:serie,matchesByFase:{}};
-    var fase=(r.fase||'').toUpperCase().trim();
-    // faseNum: 1=classificatorio/rodizio, 2=semifinal, 3=final/3lugar
-    var faseNum=1;
-    if(fase.indexOf('SEMI')>=0)faseNum=2;
-    else if(fase.indexOf('FINAL')>=0||fase.indexOf('3º LUGAR')>=0||fase.indexOf('3o LUGAR')>=0)faseNum=3;
-    if(!brkGroups[bKey].matchesByFase[faseNum])brkGroups[bKey].matchesByFase[faseNum]=[];
-    brkGroups[bKey].matchesByFase[faseNum].push({
-      hora:r.hora,local:r.local,
-      e1:(r.e1||'').trim(),e2:(r.e2||'').trim(),
-      fase:fase,faseNum:faseNum
-    });
+    if(!brkGroups[bKey])brkGroups[bKey]={sp:sp,gender:nm.gender,serie:serie,
+      classify:[],semiMatches:[],finalMatches:[],thirdMatches:[],groupMatches:{}};
+    var grp=brkGroups[bKey];
+    var fase=nrm(r.fase||'');
+    var is3rd=(fase.indexOf('3')>=0&&(fase.indexOf('LUGAR')>=0||fase.indexOf('DISPUTA')>=0));
+    var isFinal=(fase.indexOf('FINAL')>=0)&&!is3rd;
+    var isSemi=(fase.indexOf('SEMI')>=0);
+    var isGroupA=(fase==='GRUPO A');
+    var isGroupB=(fase==='GRUPO B');
+
+    var match={hora:r.hora,local:r.local,e1:(r.e1||'').trim(),e2:(r.e2||'').trim(),fase:fase};
+
+    if(is3rd){grp.thirdMatches.push(match);}
+    else if(isFinal){grp.finalMatches.push(match);}
+    else if(isSemi){grp.semiMatches.push(match);}
+    else if(isGroupA){
+      if(!grp.groupMatches['A'])grp.groupMatches['A']=[];
+      grp.groupMatches['A'].push(match);
+    } else if(isGroupB){
+      if(!grp.groupMatches['B'])grp.groupMatches['B']=[];
+      grp.groupMatches['B'].push(match);
+    } else {
+      grp.classify.push(match);
+    }
   });
 
+  // ── Build brackets with proper W_ links ─────────────────────────────
   var brackets={};
   Object.entries(brkGroups).forEach(function(e){
     var bKey=e[0],grp=e[1];
-    var fns=Object.keys(grp.matchesByFase).map(Number).sort();
+    var rounds=[];
 
-    // ── Pass 1: build all matches with real ids ───────────────────────
-    // We need to link W_matchId from earlier rounds into later rounds
-    // Strategy: for each round >1, slot count should match winners from prev round
-    // We assign real ids to round1 matches first, then chain W_ into next rounds
+    var hasGroups=Object.keys(grp.groupMatches).length>0;
+    var hasSemis=grp.semiMatches.length>0;
+    var hasFinal=grp.finalMatches.length>0;
+    var hasThird=grp.thirdMatches.length>0;
+    var hasClassify=grp.classify.length>0;
 
-    var builtRounds=[];
-    var prevRoundMatches=[];  // matches from previous round (to chain winners)
+    function buildMatch(m,t1id,t2id,is3rd){
+      return{id:u(),r:0,t1:t1id,t2:t2id,s1:null,s2:null,w:null,dt:'',
+        lc:m.local||'',is3rd:is3rd||false,_hora:m.hora||''};
+    }
+    function tId(e){
+      if(isPH(e))return null;
+      var t=turmasSet[nrm(e)];
+      return t?t.id:null;
+    }
 
-    fns.forEach(function(fn,i){
-      var rawMatches=grp.matchesByFase[fn];
-      var rn=i+1;
-      var is3rdRound=fn===3;
-
-      var built=rawMatches.map(function(m,mi){
-        var t1=turmasSet[(m.e1||'').toUpperCase()];
-        var t2=turmasSet[(m.e2||'').toUpperCase()];
-        var isPH1=isPH(m.e1), isPH2=isPH(m.e2);
-        var is3rd=is3rdRound&&(m.fase.indexOf('3')>=0||m.fase.indexOf('LUGAR')>=0||m.fase.toLowerCase().indexOf('3o')>=0);
-
-        // For non-first rounds: try to link W_matchId from previous round
-        var t1id, t2id;
-        if(i>0&&prevRoundMatches.length>0){
-          // Each final/semi slot comes from 2 prev matches (t1 from match 2*mi, t2 from match 2*mi+1)
-          // Split fn=3 matches: finals use winner slots, 3rd place uses loser slots
-          // All finals come from ALL semis: final[0] gets winners of semi[0] & semi[1]
-          // 3rd place match gets losers of semi[0] & semi[1]
-          // So both final and 3rd place point to the SAME semi matches
-          var nSemis=prevRoundMatches.length; // e.g. 2 semis
-          var nFinals=rawMatches.filter(function(rm){
-            var fase2=(rm.fase||'').toUpperCase();
-            return !(fase2.indexOf('3')>=0&&(fase2.indexOf('LUGAR')>=0||fase2.indexOf('3O')>=0||fase2.indexOf('DISPUTA')>=0));
-          }).length;
-          // For the final (mi < nFinals), use winners of semis
-          // For 3rd place (mi >= nFinals), use losers of semis
-          var src1Idx=is3rd?0:mi*2;
-          var src2Idx=is3rd?1:mi*2+1;
-          // Cap to available semis
-          if(src1Idx>=nSemis)src1Idx=0;
-          if(src2Idx>=nSemis)src2Idx=Math.min(1,nSemis-1);
-          var src1=prevRoundMatches[src1Idx];
-          var src2=prevRoundMatches[src2Idx];
-          if(is3rd){
-            // 3rd place: losers of semis
-            t1id=src1?'L_'+src1.id:(t1?t1.id:'PH_'+u());
-            t2id=src2?'L_'+src2.id:(t2?t2.id:'PH_'+u());
-          } else {
-            // Winners advance
-            if(!isPH1&&t1){t1id=t1.id;}
-            else{t1id=src1?'W_'+src1.id:'PH_'+u();}
-            if(!isPH2&&t2){t2id=t2.id;}
-            else{t2id=src2?'W_'+src2.id:'PH_'+u();}
-          }
-        } else {
-          t1id=t1?t1.id:(isPH1?'PH_'+u():'PH_'+u());
-          t2id=t2?t2.id:(isPH2?'PH_'+u():'PH_'+u());
-        }
-
-        return{id:u(),r:rn,t1:t1id,t2:t2id,s1:null,s2:null,w:null,dt:'',lc:m.local||'',is3rd:is3rd,_hora:m.hora||''};
+    if(hasGroups){
+      // ENS. MEDIO structure: Grupo A matches + Grupo B matches + Final (Grupo A winner vs Grupo B winner)
+      var groupKeys=Object.keys(grp.groupMatches).sort();
+      var groupLeaderIds=[];
+      groupKeys.forEach(function(gk){
+        var gMatches=grp.groupMatches[gk];
+        var rnd={r:rounds.length+1,label:'Grupo '+gk,m:[]};
+        gMatches.forEach(function(m){
+          var t1=tId(m.e1)||('PH_'+u());
+          var t2=tId(m.e2)||('PH_'+u());
+          rnd.m.push(buildMatch(m,t1,t2,false));
+        });
+        rounds.push(rnd);
+        // Track group round for leader slot
+        groupLeaderIds.push({gk:gk,rnd:rnd});
       });
+      // Final: 1 match, leaders of each group advance
+      // We use a special slot: W_GROUP_A and W_GROUP_B
+      // Since each group has multiple matches, we can't use W_matchId for group leader
+      // Instead: create a virtual "group winner" slot using 'GW_' prefix
+      if(hasFinal){
+        grp.finalMatches.forEach(function(fm,fi){
+          var finalRnd={r:rounds.length+1,label:'Final',m:[]};
+          // Slot for group A leader and group B leader
+          var gwA='GW_'+groupLeaderIds[0].rnd.m.map(function(m){return m.id}).join(',');
+          var gwB=groupLeaderIds[1]?'GW_'+groupLeaderIds[1].rnd.m.map(function(m){return m.id}).join(','):('PH_'+u());
+          finalRnd.m.push(buildMatch(fm,'GW_A_'+bKey,'GW_B_'+bKey,false));
+          rounds.push(finalRnd);
+        });
+      }
+    } else if(hasSemis){
+      // Classic semi → final (→ 3rd)
+      var semiRnd={r:1,label:'Semifinal',m:[]};
+      grp.semiMatches.forEach(function(m){
+        var t1=tId(m.e1)||('PH_'+u());
+        var t2=tId(m.e2)||('PH_'+u());
+        semiRnd.m.push(buildMatch(m,t1,t2,false));
+      });
+      rounds.push(semiRnd);
 
-      builtRounds.push({r:rn,m:built,faseNum:fn});
-      // For next round chaining: use the non-3rd round matches
-      if(!is3rdRound)prevRoundMatches=built;
-    });
+      if(hasFinal){
+        var finalRnd={r:2,label:'Final',m:[]};
+        grp.finalMatches.forEach(function(fm,fi){
+          var is3=false;
+          // Link W_ from semis
+          var src1=semiRnd.m[fi*2]||semiRnd.m[0];
+          var src2=semiRnd.m[fi*2+1]||semiRnd.m[1]||semiRnd.m[0];
+          finalRnd.m.push(buildMatch(fm,
+            'W_'+src1.id,
+            src2&&src2!==src1?'W_'+src2.id:('PH_'+u()),
+            false));
+        });
+        if(hasThird){
+          grp.thirdMatches.forEach(function(tm){
+            var src1=semiRnd.m[0];
+            var src2=semiRnd.m[1]||semiRnd.m[0];
+            finalRnd.m.push(buildMatch(tm,'L_'+src1.id,'L_'+src2.id,true));
+          });
+        }
+        rounds.push(finalRnd);
+      }
+    } else if(hasClassify){
+      // Rodizio / all-play-all + optional final
+      var classRnd={r:1,label:'Rodizio',m:[]};
+      grp.classify.forEach(function(m){
+        var t1=tId(m.e1)||('PH_'+u());
+        var t2=tId(m.e2)||('PH_'+u());
+        classRnd.m.push(buildMatch(m,t1,t2,false));
+      });
+      rounds.push(classRnd);
 
-    brackets[bKey]={
-      sp:grp.sp,gender:grp.gender,serie:grp.serie,
-      rounds:builtRounds.map(function(rd){return{r:rd.r,m:rd.m}})
-    };
+      if(hasFinal){
+        // Final after rodizio: winners are determined by standings
+        // Use special slot GW_ (group winner from rodizio)
+        var finalRnd={r:2,label:'Final',m:[]};
+        grp.finalMatches.forEach(function(fm){
+          finalRnd.m.push(buildMatch(fm,'GW_1_'+bKey,'GW_2_'+bKey,false));
+        });
+        if(hasThird){
+          grp.thirdMatches.forEach(function(tm){
+            finalRnd.m.push(buildMatch(tm,'GW_3_'+bKey,'GW_4_'+bKey,true));
+          });
+        }
+        rounds.push(finalRnd);
+      }
+    }
+
+    // Assign round numbers
+    rounds.forEach(function(rd,i){rd.r=i+1});
+
+    brackets[bKey]={sp:grp.sp,gender:grp.gender,serie:grp.serie,rounds:rounds,
+      hasGroups:hasGroups,hasFinal:hasFinal};
   });
 
-  return{turmas:Object.values(turmasSet),spt:Object.values(sptSet),locs:Object.keys(locsSet).map(function(l){return{id:u(),nm:l}}),brackets:brackets,totalJogos:rows.length};
+  return{turmas:Object.values(turmasSet),spt:Object.values(sptSet),
+    locs:Object.keys(locsSet).map(function(l){return{id:u(),nm:l}}),
+    brackets:brackets,totalJogos:rows.length};
 }
+
 
 function jimBracketDataToSchoolState(parsed,adminPass,year){
   year=year||'Jogos 2026';function u(){return Math.random().toString(36).slice(2,9)}
@@ -1082,6 +1134,7 @@ function rName(r,t){var d=t-r;return d===0?'Final':d===1?'Semi':d===2?'Quartas':
 function tName(id){
   if(!id||id==='BYE')return'BYE';
   if(!id||id.indexOf('PH_')===0)return'A definir';
+  if(id.indexOf('GW_')===0)return'A definir';  // group winner — TBD from standings
   if(id.indexOf('W_')===0)return'A definir';
   if(id.indexOf('L_')===0){
     var mid=id.slice(2);var found=null;
@@ -1947,6 +2000,8 @@ function pB(c){
     // Detect if it's a round-robin (many matches in round 1, no bracket tree needed)
     var totalRounds=rds.length;
     var isRobin=rds[0]&&rds[0].m&&rds[0].m.length>4;
+    // Detect group structure: has a label with 'Grupo A'/'Grupo B' or multiple classify rounds
+    var hasGroups=rds.length>1&&rds[0].label&&rds[0].label.indexOf('Grupo')>=0;
 
     if(isRobin||totalRounds===1){
       // Show as list view (rodizio style)
@@ -1997,6 +2052,54 @@ function pB(c){
       });
       tbl.appendChild(tbody);
       main.appendChild(tbl);
+
+      // Show final / 3rd place below the classify list
+      if(finalRounds.length){
+        finalRounds.forEach(function(rd){
+          var finalWrap=h('div',{style:{marginTop:'12px'}});
+          var mainFinals=rd.m.filter(function(m){return!m.is3rd});
+          var thirdFinals=rd.m.filter(function(m){return m.is3rd});
+
+          function renderFinalMatch(m,label,color){
+            var n1=tName(m.t1),n2=tName(m.t2);
+            var ECOLS={'ROXO':'#8b5cf6','VERDE':'#22c55e','VERMELHO':'#ef4444','AMARELO':'#eab308','AZUL':'#3b82f6','ROSA':'#ec4899','PRETO':'#374151','CINZA':'#6b7280','LARANJA':'#f97316'};
+            function ec(nm){var col='#64748b';var u2=(nm||'').toUpperCase();Object.entries(ECOLS).forEach(function(e){if(u2.indexOf(e[0])>=0)col=e[1]});return col;}
+            function dot(nm){return h('span',{style:{width:'9px',height:'9px',borderRadius:'50%',background:ec(nm),display:'inline-block',flexShrink:'0',marginRight:'6px'}});}
+            var isPH1=!m.t1||m.t1.indexOf('PH_')===0||m.t1.indexOf('GW_')===0||m.t1.indexOf('W_')===0;
+            var isPH2=!m.t2||m.t2.indexOf('PH_')===0||m.t2.indexOf('GW_')===0||m.t2.indexOf('W_')===0;
+            var canClick=(S.role==='admin'||S.role==='judge')&&!isPH1&&!isPH2;
+            var hasRes=m.s1!=null&&m.s2!=null;
+            var t1win=m.w===m.t1,t2win=m.w===m.t2;
+            var card=h('div',{
+              style:{border:'2px solid '+color,borderRadius:'10px',overflow:'hidden',cursor:canClick?'pointer':'default',marginBottom:'8px'},
+              onclick:canClick?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null
+            });
+            var hdrDiv=h('div',{style:{background:color+'22',padding:'5px 12px',fontSize:'10px',fontWeight:'700',color:color,textTransform:'uppercase',letterSpacing:'.08em',display:'flex',justifyContent:'space-between'}},
+              label,
+              m._hora||m.lc?h('span',{style:{fontWeight:'400',opacity:'.8'}},([m._hora,m.lc].filter(Boolean).join(' '))):null
+            );
+            card.appendChild(hdrDiv);
+            function teamRow(nm,isWin,score){
+              return h('div',{style:{display:'flex',alignItems:'center',padding:'10px 14px',background:isWin?'rgba(52,211,153,.12)':'',borderTop:'1px solid rgba(255,255,255,.06)'}},
+                dot(nm),
+                h('span',{style:{flex:'1',fontSize:'14px',fontWeight:isWin?'700':'400',color:isPH1&&isPH2?'var(--tx3)':'var(--tx)'}},(isPH1||isPH2?'A definir':nm)),
+                score!=null?h('span',{style:{fontFamily:"'Space Mono'",fontSize:'16px',fontWeight:'800',color:isWin?'var(--gn)':'var(--tx)',minWidth:'22px',textAlign:'right'}},''+score):null
+              );
+            }
+            card.appendChild(teamRow(n1,t1win,m.s1));
+            card.appendChild(teamRow(n2,t2win,m.s2));
+            return card;
+          }
+
+          mainFinals.forEach(function(m){
+            finalWrap.appendChild(renderFinalMatch(m,'🏆 Final','#22d3ee'));
+          });
+          thirdFinals.forEach(function(m){
+            finalWrap.appendChild(renderFinalMatch(m,'🥉 3º Lugar','#f59e0b'));
+          });
+          main.appendChild(finalWrap);
+        });
+      }
     } else {
       // Show as bracket tree (eliminatoria)
       var brkWrap=h('div',{style:{display:'flex',gap:'0',overflowX:'auto',paddingBottom:'16px'}});
@@ -2046,8 +2149,8 @@ function pB(c){
           var t1wo=m.wo===m.t1,t2wo=m.wo===m.t2;
           var score1=m.s1!=null?m.s1:null,score2=m.s2!=null?m.s2:null;
           // Allow click if both slots have a resolved team (not PH_ or W_ unresolved)
-          var t1ready=m.t1&&m.t1.indexOf('PH_')!==0;
-          var t2ready=m.t2&&m.t2.indexOf('PH_')!==0;
+          var t1ready=m.t1&&m.t1.indexOf('PH_')!==0&&m.t1.indexOf('GW_')!==0;
+          var t2ready=m.t2&&m.t2.indexOf('PH_')!==0&&m.t2.indexOf('GW_')!==0;
           var canClick=(S.role==='admin'||S.role==='judge')&&t1ready&&t2ready;
           var mc=h('div',{style:{marginBottom:'14px',cursor:canClick?'pointer':'default',borderRadius:'10px',overflow:'hidden',border:'1px solid var(--br)'},onclick:canClick?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null});
           if(m._hora||m.lc)mc.appendChild(h('div',{style:{fontSize:'10px',color:'var(--tx3)',padding:'4px 10px',background:'var(--c2)',borderBottom:'1px solid var(--br)'}},
@@ -3458,7 +3561,7 @@ function _runExport(rds,sp,bcat,title,serie){
   function ec(nm){var col='#64748b';var u=(nm||'').toUpperCase();Object.entries(ECOLS).forEach(function(e){if(u.indexOf(e[0])>=0)col=e[1]});return col;}
   var rounds='';
   rds.forEach(function(rd){
-    rounds+='<div class="round"><div class="rtitle">'+rName(rd.r,rds.length)+'</div>';
+    var rdLabel=rd.label||rName(rd.r,rds.length);rounds+='<div class="round"><div class="rtitle">'+rdLabel+'</div>';
     rd.m.forEach(function(m){
       var n1=tName(m.t1),n2=tName(m.t2);
       var w1=m.w===m.t1?' winner':'',w2=m.w===m.t2?' winner':'';
@@ -3477,8 +3580,15 @@ function _runExport(rds,sp,bcat,title,serie){
   var matchListHtml='';
   if(isMatchList){
     var allM=[];rds.forEach(function(rd){rd.m.forEach(function(m){allM.push(m)})});
+    // Separate classify from final/3rd
+    var classM=[],finalM=[];
+    allM.forEach(function(m){
+      var isFinal=m.t1&&(m.t1.indexOf('GW_')===0||m.t1.indexOf('W_')===0)||m.is3rd;
+      if(isFinal)finalM.push(m);else classM.push(m);
+    });
+    var displayM=classM.length?classM:allM;
     matchListHtml='<table><thead><tr><th>#</th><th>Confronto</th><th>Resultado</th></tr></thead><tbody>';
-    allM.forEach(function(m,i){
+    displayM.forEach(function(m,i){
       var n1=tName(m.t1),n2=tName(m.t2);
       var hasRes=m.s1!=null&&m.s2!=null;
       var meta=[m._hora,m.lc].filter(Boolean).join(' ');
@@ -3491,6 +3601,26 @@ function _runExport(rds,sp,bcat,title,serie){
         +'<td class="score">'+(hasRes?'<b class="res">'+m.s1+' x '+m.s2+'</b>':'—')+'</td></tr>';
     });
     matchListHtml+='</tbody></table>';
+    // Show final section
+    if(finalM.length){
+      matchListHtml+='<div style="margin-top:20px">';
+      finalM.forEach(function(m){
+        var n1=tName(m.t1),n2=tName(m.t2);
+        var label=m.is3rd?'🥉 Disputa de 3º Lugar':'🏆 Final';
+        var color=m.is3rd?'#f59e0b':'#22d3ee';
+        var hasRes=m.s1!=null&&m.s2!=null;
+        var hora=[m._hora,m.lc].filter(Boolean).join(' ');
+        matchListHtml+='<div style="border:2px solid '+color+';border-radius:10px;overflow:hidden;margin-bottom:10px">'
+          +'<div style="background:'+color+'22;padding:6px 14px;font-size:11px;font-weight:700;color:'+color+';display:flex;justify-content:space-between">'
+          +label+(hora?'<span style="font-weight:400">'+hora+'</span>':'')+' </div>'
+          +'<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;font-size:15px;border-top:1px solid rgba(255,255,255,.06)">'
+          +'<span><span class="dot" style="background:'+ec(n1)+'"></span><b>'+n1+'</b></span>'
+          +(hasRes?'<b style="font-family:monospace;font-size:18px;font-weight:800;color:#34d399">'+m.s1+' x '+m.s2+'</b>':'<span style="color:#475569">A definir</span>')
+          +'<span><span class="dot" style="background:'+ec(n2)+'"></span><b>'+n2+'</b></span>'
+          +'</div></div>';
+      });
+      matchListHtml+='</div>';
+    }
   }
   var out='<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">'
     +'<meta name="viewport" content="width=device-width,initial-scale=1">'
