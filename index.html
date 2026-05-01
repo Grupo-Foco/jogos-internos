@@ -1371,10 +1371,17 @@ function calcRk(){
       if(finalMatch&&finalMatch.w){
         var first=finalMatch.w;
         var second=finalMatch.w===finalMatch.t1?finalMatch.t2:finalMatch.t1;
-        if(first&&first!=='BYE'){if(!pts[first])pts[first]={w:0,p:0,wo:0};pts[first].p+=(sc.p1||0)}
-        if(second&&second!=='BYE'&&second.indexOf('W_')!==0&&second.indexOf('L_')!==0){if(!pts[second])pts[second]={w:0,p:0,wo:0};pts[second].p+=(sc.p2||0)}
+        // Use pospts helper to get position points (supports both old p1..p8 and new positions[])
+        function pp(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
+        if(first&&first!=='BYE'&&first.indexOf('W_')!==0&&first.indexOf('L_')!==0&&first.indexOf('GW_')!==0&&first.indexOf('PH_')!==0){
+          if(!pts[first])pts[first]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[first].p+=pp(1);
+        }
+        if(second&&second!=='BYE'&&second.indexOf('W_')!==0&&second.indexOf('L_')!==0&&second.indexOf('GW_')!==0&&second.indexOf('PH_')!==0){
+          if(!pts[second])pts[second]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[second].p+=pp(2);
+        }
       }
       if(thirdMatch&&thirdMatch.w){
+        function pp3(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
         var third=thirdMatch.w;
         var fourth=thirdMatch.w===thirdMatch.t1?thirdMatch.t2:thirdMatch.t1;
         if(third&&third!=='BYE'&&third.indexOf('L_')!==0){if(!pts[third])pts[third]={w:0,p:0,wo:0};pts[third].p+=(sc.p3||0)}
@@ -3770,10 +3777,12 @@ function _runExport(rds,sp,bcat,title,serie){
   var matchListHtml='';
   if(isMatchList){
     var allM=[];rds.forEach(function(rd){rd.m.forEach(function(m){allM.push(m)})});
-    // Separate classify from final/3rd
+    // Separate classify from final/3rd (use _slot1 metadata for resolved finals)
     var classM=[],finalM=[];
     allM.forEach(function(m){
-      var isFinal=m.t1&&(m.t1.indexOf('GW_')===0||m.t1.indexOf('W_')===0)||m.is3rd;
+      var slot1=m._slot1||m.t1||'';
+      var slot2=m._slot2||m.t2||'';
+      var isFinal=slot1.indexOf('GW_')===0||slot1.indexOf('W_')===0||slot2.indexOf('GW_')===0||slot2.indexOf('W_')===0||m.is3rd;
       if(isFinal)finalM.push(m);else classM.push(m);
     });
     var displayM=classM.length?classM:allM;
