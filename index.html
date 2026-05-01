@@ -835,8 +835,12 @@ function _buildJimRows(rows){
     var hasClassify=grp.classify.length>0;
 
     function buildMatch(m,t1id,t2id,is3rd){
-      return{id:u(),r:0,t1:t1id,t2:t2id,s1:null,s2:null,w:null,dt:'',
+      var match={id:u(),r:0,t1:t1id,t2:t2id,s1:null,s2:null,w:null,dt:'',
         lc:m.local||'',is3rd:is3rd||false,_hora:m.hora||''};
+      // Store original slot codes for GW_/W_/L_ for re-computation
+      if(t1id&&(t1id.indexOf('GW_')===0||t1id.indexOf('W_')===0||t1id.indexOf('L_')===0))match._slot1=t1id;
+      if(t2id&&(t2id.indexOf('GW_')===0||t2id.indexOf('W_')===0||t2id.indexOf('L_')===0))match._slot2=t2id;
+      return match;
     }
     function tId(e){
       if(isPH(e))return null;
@@ -1225,19 +1229,32 @@ function recomputeGroupWinners(bk,ct){
   finalRounds.forEach(function(rd){
     rd.m.forEach(function(m){
       ['t1','t2'].forEach(function(slot){
-        var s=m[slot];
-        if(!s||s.indexOf('GW_')!==0)return;
+        // Use _slot1/_slot2 metadata if available (always re-resolves), 
+        // else fall back to current slot value if it's a GW_ pattern
+        var slotKey='_slot'+(slot==='t1'?'1':'2');
+        var origCode=m[slotKey];
+        var s=origCode||m[slot];
+        if(!s||s.indexOf('GW_')!==0){
+          // Not a group-winner slot, but still might be W_ or L_ which is handled by save
+          return;
+        }
         var match=s.match(/^GW_([A-Z0-9]+)_/);
         if(!match)return;
         var code=match[1];
         var newId=null;
         if(code==='A')newId=findStandingByPos(0,1);
         else if(code==='B')newId=findStandingByPos(1,1);
+        else if(code==='A2')newId=findStandingByPos(0,2);
+        else if(code==='B2')newId=findStandingByPos(1,2);
         else if(code==='1')newId=findStandingByPos(0,1);
         else if(code==='2')newId=findStandingByPos(0,2);
         else if(code==='3')newId=findStandingByPos(0,3);
         else if(code==='4')newId=findStandingByPos(0,4);
+        // Ensure the slot metadata is preserved
+        if(!m[slotKey])m[slotKey]=s;
+        // Only set if we have a valid winner (don't overwrite with null)
         if(newId)m[slot]=newId;
+        else if(origCode)m[slot]=origCode;  // restore PH state if no leader yet
       });
     });
   });
@@ -2098,7 +2115,7 @@ function pB(c){
     // Detect semi+final structure (use bracket tree)
     var hasSemiFinal=rds.length>1&&rds[0].label&&(rds[0].label.indexOf('Semi')>=0||rds[0].label==='Semifinal');
 
-    if(!hasSemiFinal&&(isRobin||totalRounds===1||(totalRounds>1&&rds[0].m&&rds[0].m.length>3)||hasGroups)){
+    if(!hasSemiFinal&&(isRobin||totalRounds===1||(totalRounds>1&&rds[0].m&&rds[0].m.length>=3)||hasGroups)){
       // ── Separate classify rounds from final/3rd rounds ──────────────────
       var classifyRounds=[],finalRounds=[];
       rds.forEach(function(rd){
@@ -3672,7 +3689,10 @@ function exportBracketByKey(bkey,bcat){
   _runExport(rds,sp,bcat,title,serie);
 }
 function _runExport(rds,sp,bcat,title,serie){
-  var isMatchList=rds.length===1||(rds[0]&&rds[0].m&&rds[0].m.length>4);
+  // Detect rodízio/groups: match list mode if any classify round has 3+ matches or label contains Grupo/Rodizio
+  var hasGroupsExp=rds.some(function(rd){return rd.label&&(rd.label.indexOf('Grupo')>=0||rd.label==='Rodizio')});
+  var hasSemiExp=rds.some(function(rd){return rd.label==='Semifinal'});
+  var isMatchList=!hasSemiExp&&(rds.length===1||hasGroupsExp||(rds[0]&&rds[0].m&&rds[0].m.length>=3));
   var ECOLS={'ROXO':'#8b5cf6','VERDE':'#22c55e','VERMELHO':'#ef4444','AMARELO':'#eab308','AZUL':'#3b82f6','ROSA':'#ec4899','PRETO':'#334155','CINZA':'#6b7280','LARANJA':'#f97316'};
   function ec(nm){var col='#64748b';var u=(nm||'').toUpperCase();Object.entries(ECOLS).forEach(function(e){if(u.indexOf(e[0])>=0)col=e[1]});return col;}
   var rounds='';
