@@ -801,16 +801,17 @@ function _buildJimRows(rows){
     var grp=brkGroups[bKey];
     var fase=nrm(r.fase||'');
     var is3rd=(fase.indexOf('3')>=0&&(fase.indexOf('LUGAR')>=0||fase.indexOf('DISPUTA')>=0));
-    var isFinal=(fase.indexOf('FINAL')>=0)&&!is3rd;
+    // SEMIFINAL detection MUST come before FINAL because 'FINAL' is substring of 'SEMIFINAL'
     var isSemi=(fase.indexOf('SEMI')>=0);
+    var isFinal=(fase.indexOf('FINAL')>=0)&&!is3rd&&!isSemi;
     var isGroupA=(fase==='GRUPO A');
     var isGroupB=(fase==='GRUPO B');
 
     var match={hora:r.hora,local:r.local,e1:(r.e1||'').trim(),e2:(r.e2||'').trim(),fase:fase};
 
     if(is3rd){grp.thirdMatches.push(match);}
-    else if(isFinal){grp.finalMatches.push(match);}
     else if(isSemi){grp.semiMatches.push(match);}
+    else if(isFinal){grp.finalMatches.push(match);}
     else if(isGroupA){
       if(!grp.groupMatches['A'])grp.groupMatches['A']=[];
       grp.groupMatches['A'].push(match);
@@ -1208,8 +1209,31 @@ function recomputeGroupWinners(bk,ct){
       else if(m.w===t1){stats[t1].w++;stats[t1].pts+=3;stats[t2].l++;}
       else if(m.w===t2){stats[t2].w++;stats[t2].pts+=3;stats[t1].l++;}
     });
+    // Apply configurable tiebreakers
+    var tiebreakers=(S.tiebreakers||['pts','gd','headtohead','gp']);
     var sorted=Object.values(stats).sort(function(a,b){
-      return b.pts-a.pts||b.gd-a.gd||b.gp-a.gp;
+      // Always start with points (wins)
+      if(b.pts!==a.pts)return b.pts-a.pts;
+      // Apply tiebreakers in order
+      for(var i=0;i<tiebreakers.length;i++){
+        var tb=tiebreakers[i];
+        if(tb==='gd'&&b.gd!==a.gd)return b.gd-a.gd;
+        if(tb==='gp'&&b.gp!==a.gp)return b.gp-a.gp;
+        if(tb==='headtohead'){
+          // Find the match between these two teams
+          var hth=null;
+          rd.m.forEach(function(m){
+            if((m.t1===a.t&&m.t2===b.t)||(m.t1===b.t&&m.t2===a.t)){
+              if(m.s1!=null&&m.s2!=null)hth=m;
+            }
+          });
+          if(hth&&hth.w){
+            if(hth.w===a.t)return -1;
+            if(hth.w===b.t)return 1;
+          }
+        }
+      }
+      return 0;
     });
     groupStandings.push({groupIdx:gi,standings:sorted});
   });
@@ -1226,21 +1250,37 @@ function recomputeGroupWinners(bk,ct){
     return g.standings[pos-1].t;
   }
 
+  // Check if all classify games are completed (have scores)
+  function isGroupComplete(groupIdx){
+    var rd=classifyRounds[groupIdx];
+    if(!rd)return false;
+    return rd.m.every(function(mm){
+      var bothPH=(!mm.t1||mm.t1.indexOf('PH_')===0)&&(!mm.t2||mm.t2.indexOf('PH_')===0);
+      if(bothPH)return true; // skip placeholder matches
+      return mm.s1!=null&&mm.s2!=null;
+    });
+  }
+
   finalRounds.forEach(function(rd){
     rd.m.forEach(function(m){
       ['t1','t2'].forEach(function(slot){
-        // Use _slot1/_slot2 metadata if available (always re-resolves), 
-        // else fall back to current slot value if it's a GW_ pattern
         var slotKey='_slot'+(slot==='t1'?'1':'2');
         var origCode=m[slotKey];
         var s=origCode||m[slot];
-        if(!s||s.indexOf('GW_')!==0){
-          // Not a group-winner slot, but still might be W_ or L_ which is handled by save
-          return;
-        }
+        if(!s||s.indexOf('GW_')!==0)return;
         var match=s.match(/^GW_([A-Z0-9]+)_/);
         if(!match)return;
         var code=match[1];
+        // Determine which group this code refers to
+        var groupIdx=0;
+        if(code==='B'||code==='B2')groupIdx=1;
+        // Only resolve if the group is complete (all games scored)
+        if(!m[slotKey])m[slotKey]=s;
+        if(!isGroupComplete(groupIdx)){
+          // Reset to placeholder so user knows it's pending
+          m[slot]=origCode||s;
+          return;
+        }
         var newId=null;
         if(code==='A')newId=findStandingByPos(0,1);
         else if(code==='B')newId=findStandingByPos(1,1);
@@ -1250,11 +1290,8 @@ function recomputeGroupWinners(bk,ct){
         else if(code==='2')newId=findStandingByPos(0,2);
         else if(code==='3')newId=findStandingByPos(0,3);
         else if(code==='4')newId=findStandingByPos(0,4);
-        // Ensure the slot metadata is preserved
-        if(!m[slotKey])m[slotKey]=s;
-        // Only set if we have a valid winner (don't overwrite with null)
         if(newId)m[slot]=newId;
-        else if(origCode)m[slot]=origCode;  // restore PH state if no leader yet
+        else m[slot]=origCode||s;
       });
     });
   });
@@ -2183,7 +2220,19 @@ function pB(c){
       main.appendChild(tbl);
 
       // ── Show final / 3rd place cards below the list ──────────────────────
-      if(finalRounds.length){
+      // Only show if classify matches are ALL completed OR final already has scores
+      var allClassifyDone=classifyRounds.length>0&&classifyRounds.every(function(rd){
+        return rd.m.every(function(m){
+          var isPH1=!m.t1||m.t1.indexOf('PH_')===0||m.t1.indexOf('W_')===0||m.t1.indexOf('L_')===0||m.t1.indexOf('GW_')===0;
+          var isPH2=!m.t2||m.t2.indexOf('PH_')===0||m.t2.indexOf('W_')===0||m.t2.indexOf('L_')===0||m.t2.indexOf('GW_')===0;
+          return (isPH1&&isPH2)||(m.s1!=null&&m.s2!=null);
+        });
+      });
+      var anyFinalHasScore=finalRounds.length&&finalRounds.some(function(rd){
+        return rd.m.some(function(m){return m.s1!=null||m.s2!=null});
+      });
+      var showFinals=allClassifyDone||anyFinalHasScore;
+      if(finalRounds.length&&showFinals){
         finalRounds.forEach(function(rd){
           var finalWrap=h('div',{style:{marginTop:'12px'}});
           var mainFinals=rd.m.filter(function(m){return!m.is3rd});
@@ -2223,6 +2272,11 @@ function pB(c){
           thirdFinals.forEach(function(m){finalWrap.appendChild(renderFinalMatch(m,'🥉 3º Lugar','#f59e0b'))});
           main.appendChild(finalWrap);
         });
+      } else if(finalRounds.length&&!showFinals){
+        // Notice: final will be generated after classify
+        main.appendChild(h('div',{style:{marginTop:'14px',padding:'14px 16px',background:'rgba(251,191,36,.08)',border:'1px dashed rgba(251,191,36,.3)',borderRadius:'10px',textAlign:'center',fontSize:'12px',color:'var(--am)'}},
+          '⏳ A grande final será gerada automaticamente após todos os jogos serem registrados.'
+        ));
       }
         } else {
       // Show as bracket tree (eliminatoria)
@@ -4613,6 +4667,54 @@ function pScoring(c){
     c.appendChild(h('div',{style:{display:'flex',gap:'8px',marginBottom:'16px'}},
       h('button',{'class':'btn btn-p',onclick:function(){scheduleSave();var msg=document.createElement('div');msg.style.cssText='position:fixed;bottom:24px;right:24px;background:#34d399;color:#022c22;padding:10px 18px;border-radius:8px;font-weight:700;font-size:13px;z-index:9999;';msg.textContent='Pontuacao salva!';document.body.appendChild(msg);setTimeout(function(){if(msg.parentNode)msg.parentNode.removeChild(msg)},2000)}},'Salvar'),
       h('button',{'class':'btn',onclick:function(){if(!confirm('Restaurar padrao?'))return;S.scoring={positions:[{key:'p1',label:'1o Lugar',color:PLCL[0],pts:10},{key:'p2',label:'2o Lugar',color:PLCL[1],pts:8},{key:'p3',label:'3o Lugar',color:PLCL[2],pts:6},{key:'p4',label:'4o Lugar',color:PLCL[3],pts:4}],pWin:3,pDraw:1,pLoss:0,pWO:-2};render()}},'Restaurar Padrao')));
+
+    // ── TIEBREAKERS SECTION ────────────────────────────────────────────
+    if(!S.tiebreakers)S.tiebreakers=['gd','headtohead','gp'];
+    var tbCard=h('div',{'class':'card',style:{marginTop:'16px'}});
+    tbCard.appendChild(h('div',{'class':'card-h'},h('div',{'class':'card-t'},'Critérios de Desempate'),
+      h('div',{style:{fontSize:'11px',color:'var(--tx3)'}},'Ordem aplicada após pontos iguais')));
+    var tbBody=h('div',{'class':'card-b'});
+    var TB_LABELS={
+      'gd':'Saldo de Gols',
+      'headtohead':'Confronto Direto',
+      'gp':'Gols Pró (mais gols feitos)',
+      'yellow':'Menos Cartões Amarelos',
+      'red':'Menos Cartões Vermelhos'
+    };
+    function renderTB(){
+      tbBody.innerHTML='';
+      S.tiebreakers.forEach(function(tb,i){
+        var row=h('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'8px 10px',background:'var(--c2)',borderRadius:'6px',marginBottom:'4px'}});
+        row.appendChild(h('div',{style:{width:'24px',height:'24px',borderRadius:'50%',background:'var(--cy)',color:'#0f172a',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'700',fontSize:'12px',flexShrink:'0'}},''+(i+1)));
+        row.appendChild(h('div',{style:{flex:'1',fontSize:'13px'}},TB_LABELS[tb]||tb));
+        if(i>0)row.appendChild(h('button',{'class':'btn btn-s',title:'Mover para cima',onclick:(function(idx){return function(){
+          var tmp=S.tiebreakers[idx-1];S.tiebreakers[idx-1]=S.tiebreakers[idx];S.tiebreakers[idx]=tmp;renderTB();scheduleSave();
+        }})(i)},'⬆'));
+        if(i<S.tiebreakers.length-1)row.appendChild(h('button',{'class':'btn btn-s',title:'Mover para baixo',onclick:(function(idx){return function(){
+          var tmp=S.tiebreakers[idx+1];S.tiebreakers[idx+1]=S.tiebreakers[idx];S.tiebreakers[idx]=tmp;renderTB();scheduleSave();
+        }})(i)},'⬇'));
+        row.appendChild(h('button',{'class':'btn btn-s btn-r',title:'Remover',onclick:(function(idx){return function(){
+          if(S.tiebreakers.length<=1){alert('Mantenha ao menos 1 critério.');return;}
+          S.tiebreakers.splice(idx,1);renderTB();scheduleSave();
+        }})(i)},'×'));
+        tbBody.appendChild(row);
+      });
+      // Add available criteria
+      var availTB=Object.keys(TB_LABELS).filter(function(k){return S.tiebreakers.indexOf(k)<0});
+      if(availTB.length){
+        var addBox=h('div',{style:{marginTop:'8px',display:'flex',gap:'6px',alignItems:'center'}});
+        addBox.appendChild(h('span',{style:{fontSize:'11px',color:'var(--tx3)'}},'Adicionar:'));
+        availTB.forEach(function(k){
+          addBox.appendChild(h('button',{'class':'btn btn-s',onclick:(function(key){return function(){
+            S.tiebreakers.push(key);renderTB();scheduleSave();
+          }})(k)},'+ '+TB_LABELS[k]));
+        });
+        tbBody.appendChild(addBox);
+      }
+    }
+    renderTB();
+    tbCard.appendChild(tbBody);
+    c.appendChild(tbCard);
   }
   render();
 }
