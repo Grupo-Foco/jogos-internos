@@ -2817,9 +2817,10 @@ function pB(c){
           var t1win=m.w&&m.w===m.t1,t2win=m.w&&m.w===m.t2;
           var t1wo=m.wo===m.t1,t2wo=m.wo===m.t2;
           var score1=m.s1!=null?m.s1:null,score2=m.s2!=null?m.s2:null;
-          // Allow click if both slots have a resolved team (not PH_ or W_ unresolved)
-          var t1ready=m.t1&&m.t1.indexOf('PH_')!==0&&m.t1.indexOf('GW_')!==0;
-          var t2ready=m.t2&&m.t2.indexOf('PH_')!==0&&m.t2.indexOf('GW_')!==0;
+          // Allow click only if both slots have a resolved REAL team
+          // (not PH_, GW_, W_, or L_ — those mean upstream match is not yet decided)
+          var t1ready=m.t1&&m.t1.indexOf('PH_')!==0&&m.t1.indexOf('GW_')!==0&&m.t1.indexOf('W_')!==0&&m.t1.indexOf('L_')!==0&&m.t1!=='BYE';
+          var t2ready=m.t2&&m.t2.indexOf('PH_')!==0&&m.t2.indexOf('GW_')!==0&&m.t2.indexOf('W_')!==0&&m.t2.indexOf('L_')!==0&&m.t2!=='BYE';
           var canClick=(S.role==='admin'||S.role==='judge')&&t1ready&&t2ready;
           var mc=h('div',{style:{marginBottom:'14px',cursor:canClick?'pointer':'default',borderRadius:'10px',overflow:'hidden',border:'1px solid var(--br)'},onclick:canClick?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null});
           if(m._hora||m.lc)mc.appendChild(h('div',{style:{fontSize:'10px',color:'var(--tx3)',padding:'4px 10px',background:'var(--c2)',borderBottom:'1px solid var(--br)'}},
@@ -2833,6 +2834,53 @@ function pB(c){
         brkWrap.appendChild(col);
       });
       main.appendChild(brkWrap);
+
+      // ── CLASSIFICAÇÃO FINAL (semi+final / bracket tree) ─────────────────
+      // Build the 1º/2º/3º/4º card from the actual final + 3rd-place results.
+      var sc=S.scoring||{p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1,pWin:3,pWO:-2};
+      function _isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
+      var lastRound=rds[rds.length-1];
+      if(lastRound&&lastRound.m){
+        var mainFm=lastRound.m.find(function(m){return!m.is3rd&&m.w});
+        var thirdFm=lastRound.m.find(function(m){return m.is3rd&&m.w});
+        var orderedTreeIds=[];
+        if(mainFm&&_isReal(mainFm.w)){
+          orderedTreeIds.push(mainFm.w);
+          var sec=mainFm.w===mainFm.t1?mainFm.t2:mainFm.t1;
+          if(_isReal(sec))orderedTreeIds.push(sec);
+        }
+        if(thirdFm&&_isReal(thirdFm.w)){
+          orderedTreeIds.push(thirdFm.w);
+          var fou=thirdFm.w===thirdFm.t1?thirdFm.t2:thirdFm.t1;
+          if(_isReal(fou))orderedTreeIds.push(fou);
+        }
+        if(orderedTreeIds.length){
+          // Inline render of the same Classificação Final card (independent of pB function scopes)
+          function pospts2(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
+          var posLbl2=['🥇 1º Lugar','🥈 2º Lugar','🥉 3º Lugar','4º Lugar','5º Lugar','6º Lugar','7º Lugar','8º Lugar'];
+          var posCol2=['#fbbf24','#94a3b8','#fb923c','#22d3ee','#a78bfa','#f472b6','#64748b','#475569'];
+          var ECOLS3={'ROXO':'#8b5cf6','VERDE':'#22c55e','VERMELHO':'#ef4444','AMARELO':'#eab308','AZUL':'#3b82f6','ROSA':'#ec4899','PRETO':'#374151','CINZA':'#6b7280','LARANJA':'#f97316'};
+          function ec3(nm){var col='var(--tx3)';var u=(nm||'').toUpperCase();Object.entries(ECOLS3).forEach(function(e){if(u.indexOf(e[0])>=0)col=e[1]});return col;}
+          var fcCardTree=h('div',{'class':'card',style:{marginTop:'14px',border:'1px solid rgba(34,211,238,.3)'}});
+          fcCardTree.appendChild(h('div',{'class':'card-h',style:{background:'linear-gradient(135deg,rgba(34,211,238,.08),rgba(139,92,246,.06))'}},
+            h('div',{'class':'card-t'},'🏆 Classificação Final')));
+          orderedTreeIds.slice(0,4).forEach(function(tid,i){
+            var nm=tName(tid);
+            var pts=pospts2(i+1);
+            var bg=i===0?'rgba(251,191,36,.06)':i===1?'rgba(148,163,184,.05)':i===2?'rgba(251,146,60,.05)':'';
+            var row=h('div',{style:{display:'grid',gridTemplateColumns:'130px 1fr 80px',gap:'10px',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid var(--br)',background:bg}},
+              h('span',{style:{fontWeight:'700',fontSize:'12px',color:posCol2[i]||'var(--tx3)'}},posLbl2[i]||((i+1)+'º Lugar')),
+              h('span',{style:{display:'flex',alignItems:'center',gap:'8px',fontSize:'14px',fontWeight:'600'}},
+                h('span',{style:{width:'10px',height:'10px',borderRadius:'50%',background:ec3(nm),flexShrink:'0'}}),
+                h('span',{},nm)
+              ),
+              h('span',{style:{textAlign:'right',fontFamily:"'Space Mono'",fontSize:'14px',fontWeight:'800',color:pts>0?'var(--gn)':pts<0?'var(--rd)':'var(--tx3)'}},(pts>0?'+':'')+pts+' pts')
+            );
+            fcCardTree.appendChild(row);
+          });
+          main.appendChild(fcCardTree);
+        }
+      }
     }
   }
 
@@ -2942,27 +2990,104 @@ function pR(c){
     var na=sr(a),nb=sr(b);
     return na!==nb?na-nb:a.localeCompare(b,'pt');
   });
-  if(!S.rkSerie)S.rkSerie='';
+
+  // S.rkSeries: array of selected series (multi-select). Empty = all.
+  // Migrate from old single-series state if needed.
+  if(typeof S.rkSeries==='undefined'){
+    S.rkSeries=S.rkSerie?[S.rkSerie]:[];
+  }
+  if(typeof S.rkGroupByColor==='undefined')S.rkGroupByColor=false;
+
+  // Helper to extract color from turma name
+  var COLOR_NAMES=['ROXO','VERDE','VERMELHO','AMARELO','AZUL','ROSA','PRETO','BRANCO','CINZA','LARANJA'];
+  function extractColor(nm){
+    var up=(nm||'').toUpperCase();
+    for(var i=0;i<COLOR_NAMES.length;i++)if(up.indexOf(COLOR_NAMES[i])>=0)return COLOR_NAMES[i];
+    return null;
+  }
+  function extractSerie(nm){
+    var up=(nm||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
+    var m=up.match(/^(\d+[\u00ba]?\s*ANO)/)||
+          up.match(/^(ENS\.?\s*M[EÉ]DIO)/i)||
+          up.match(/^(\d+[\u00baª]?[\u00ba]?\s*S[ÉE]RIE)/)||
+          up.match(/^(\d+[\u00ba]?)/);
+    return m?m[1].trim():'OUTROS';
+  }
+
   if(seriesInRk.length>1){
-    var stabs=h('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'10px'}});
-    stabs.appendChild(h('button',{'class':'btn btn-s'+(S.rkSerie===''?' btn-p':''),onclick:function(){S.rkSerie='';R()}},'Todas'));
+    // Multi-select series filter
+    var sFilterCard=h('div',{style:{marginBottom:'12px',padding:'10px 12px',background:'var(--c2)',border:'1px solid var(--br)',borderRadius:'10px'}});
+    sFilterCard.appendChild(h('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'8px'}},'Filtrar séries'));
+    var stabs=h('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap'}});
+    var allSelected=S.rkSeries.length===0;
+    stabs.appendChild(h('button',{
+      'class':'btn btn-s'+(allSelected?' btn-p':''),
+      onclick:function(){S.rkSeries=[];S.rkSerie='';R()}
+    },'Todas'));
     seriesInRk.forEach(function(sr){
-      stabs.appendChild(h('button',{'class':'btn btn-s'+(S.rkSerie===sr?' btn-p':''),style:{fontSize:'11px'},onclick:(function(s){return function(){S.rkSerie=s;R()}})(sr)},sr));
+      var isOn=S.rkSeries.indexOf(sr)>=0;
+      stabs.appendChild(h('button',{
+        'class':'btn btn-s'+(isOn?' btn-p':''),
+        style:{fontSize:'11px'},
+        onclick:(function(s){return function(){
+          var idx=S.rkSeries.indexOf(s);
+          if(idx>=0)S.rkSeries.splice(idx,1);
+          else S.rkSeries.push(s);
+          S.rkSerie=S.rkSeries[0]||'';// keep legacy field in sync
+          R();
+        }})(sr)
+      },(isOn?'☑ ':'☐ ')+sr));
     });
-    c.appendChild(stabs);
-    // Filter crF and rkF by selected serie
-    if(S.rkSerie){
-      var srFilter=function(r){
-        var nm=(r.nm||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
-        var sr=S.rkSerie.replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
-        return nm.indexOf(sr)===0;
-      };
-      crF=crF.filter(srFilter);
-      rkF=rkF.filter(function(r){
-        var nm=(r.cn||r.tn||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
-        var sr=S.rkSerie.replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
-        return nm.indexOf(sr)===0;
+    sFilterCard.appendChild(stabs);
+
+    // "Somar por cor" toggle (only meaningful with at least one selection)
+    sFilterCard.appendChild(h('div',{style:{marginTop:'10px',paddingTop:'10px',borderTop:'1px solid var(--br)',display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}},
+      h('button',{
+        'class':'btn btn-s'+(S.rkGroupByColor?' btn-p':''),
+        onclick:function(){S.rkGroupByColor=!S.rkGroupByColor;R()},
+        title:'Soma os pontos das turmas selecionadas pela cor da equipe',
+        style:{fontSize:'11px'}
+      },(S.rkGroupByColor?'☑':'☐')+' Somar por cor da equipe'),
+      h('span',{style:{fontSize:'10px',color:'var(--tx3)',flex:'1'}},'Ex.: 1º VERMELHO + 2º VERMELHO viram 1 entrada VERMELHO')
+    ));
+    c.appendChild(sFilterCard);
+
+    // Apply series filter
+    if(S.rkSeries.length){
+      var srSet={};S.rkSeries.forEach(function(s){srSet[s.replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase()]=true});
+      crF=crF.filter(function(r){
+        var s=extractSerie(r.nm).replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
+        return srSet[s];
       });
+      rkF=rkF.filter(function(r){
+        var s=extractSerie(r.cn||r.tn||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
+        return srSet[s];
+      });
+    }
+
+    // Apply color grouping (after series filter)
+    if(S.rkGroupByColor){
+      // Aggregate crF by color
+      var byColor={};
+      crF.forEach(function(r){
+        var col=extractColor(r.nm)||'SEM COR';
+        if(!byColor[col])byColor[col]={id:'color_'+col,nm:col,yr:'',p:0,_count:0,_classes:[]};
+        byColor[col].p+=r.p;
+        byColor[col]._count++;
+        byColor[col]._classes.push(r.nm);
+      });
+      crF=Object.values(byColor).sort(function(a,b){return b.p-a.p});
+      // Same for rkF (equipes view)
+      var byColorTeam={};
+      rkF.forEach(function(r){
+        var col=extractColor(r.cn||r.tn||'')||'SEM COR';
+        if(!byColorTeam[col])byColorTeam[col]={id:'color_team_'+col,tn:col,cn:col,sn:'(soma)',yr:'',w:0,p:0,wo:0,draws:0,_count:0};
+        byColorTeam[col].p+=r.p;
+        byColorTeam[col].w+=r.w;
+        byColorTeam[col].wo+=r.wo||0;
+        byColorTeam[col]._count++;
+      });
+      rkF=Object.values(byColorTeam).sort(function(a,b){return b.p-a.p});
     }
   }
   c.appendChild(h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px',flexWrap:'wrap',gap:'8px'}},
@@ -2972,7 +3097,7 @@ function pR(c){
     ),
     S.role==='admin'?h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
       h('button',{'class':'btn btn-s',onclick:function(){exportRankingResumido(crF,rkF)}},'📋 Exportar Resumido'),
-      h('button',{'class':'btn btn-p btn-s',onclick:function(){exportRankingDetail(crF)}},'📊 Exportar Detalhado')
+      S.rkGroupByColor?null:h('button',{'class':'btn btn-p btn-s',onclick:function(){exportRankingDetail(crF)}},'📊 Exportar Detalhado')
     ):null
   ));
 
@@ -2981,6 +3106,19 @@ function pR(c){
   if(!ls.length)body.appendChild(h('div',{'class':'em'},'Sem resultados'));
   else ls.forEach(function(r,i){
     if(S.rt==='class'){
+      // For grouped-by-color rows, skip the expand/detail (no per-class breakdown)
+      if(S.rkGroupByColor&&r.id&&r.id.indexOf('color_')===0){
+        var classes=(r._classes||[]).join(' · ');
+        body.appendChild(h('div',{'class':'rr'},
+          h('div',{'class':'rp '+(i<3?'r'+(i+1):'ro')},''+(i+1)),
+          h('div',{style:{flex:'1'}},
+            h('div',{'class':'rn'},'🎨 '+r.nm),
+            h('div',{style:{fontSize:'10px',color:'var(--tx3)',marginTop:'2px'}},(r._count||0)+' turma(s)'+(classes?': '+classes:''))
+          ),
+          h('div',{'class':'rv'},r.p+' pts')
+        ));
+        return;
+      }
       var detail=calcClassDetail(r.id);
       var isExpanded=S._expandedRk===r.id;
       var row=h('div',{style:{borderBottom:'1px solid var(--bd)'}});
@@ -3189,7 +3327,8 @@ function calcClassDetail(classId){
 // Export resumed ranking (just the leaderboard, no breakdown). For publication.
 function exportRankingResumido(crData,rkData){
   var serie=S.bay||'';
-  var serieFilter=S.rkSerie||'';
+  var serieFilter=(S.rkSeries&&S.rkSeries.length)?S.rkSeries.join(', '):'';
+  var grouped=!!S.rkGroupByColor;
   var rows='';
   // Top 3 highlight
   crData.forEach(function(r,i){
@@ -3197,9 +3336,10 @@ function exportRankingResumido(crData,rkData){
     var posIco=i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
     var posCol=i===0?'#fbbf24':i===1?'#94a3b8':i===2?'#fb923c':'#64748b';
     var bg=i===0?'rgba(251,191,36,.08)':i===1?'rgba(148,163,184,.06)':i===2?'rgba(251,146,60,.06)':'';
+    var label=grouped&&r.id&&String(r.id).indexOf('color_')===0?('🎨 '+r.nm+(r._count?' <small style="color:#64748b;font-weight:400">('+r._count+' turmas)</small>':'')):r.nm;
     rows+='<tr style="background:'+bg+'">'
       +'<td class="pos" style="color:'+posCol+'"><span class="ico">'+posIco+'</span>'+pos+'º</td>'
-      +'<td class="nm">'+r.nm+'</td>'
+      +'<td class="nm">'+label+'</td>'
       +'<td class="pts">'+r.p+'</td>'
       +'</tr>';
   });
@@ -3208,6 +3348,7 @@ function exportRankingResumido(crData,rkData){
   var subtitle='Gerado em '+new Date().toLocaleString('pt-BR');
   if(serie)subtitle+=' · '+serie;
   if(serieFilter)subtitle+=' · '+serieFilter;
+  if(grouped)subtitle+=' · soma por cor';
 
   var out='<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">'
     +'<meta name="viewport" content="width=device-width,initial-scale=1">'
