@@ -1280,6 +1280,18 @@ function recomputeGroupWinners(bk,ct){
     }
   }
 
+  // DEBUG: Log structure for diagnosis
+  if(window.__DEBUG_RECOMPUTE){
+    console.log('[recompute]', bk, ct, '— classifyRounds:', classifyRounds.length, 'finalRounds:', finalRounds.length);
+    classifyRounds.forEach(function(rd,i){
+      var n=rd.m.filter(function(m){return m.s1!=null&&m.s2!=null}).length;
+      console.log('[recompute]  Group', i, '(' + (rd.label||'?') + '):', n + '/' + rd.m.length, 'matches scored');
+    });
+    groupStandings.forEach(function(g){
+      console.log('[recompute]  Group', g.groupIdx, 'standings:', g.standings.map(function(s){return s.t.slice(0,4)+':'+s.pts+'pts'}).join(', '));
+    });
+  }
+
   finalRounds.forEach(function(rd){
     rd.m.forEach(function(m,matchIdx){
       ['t1','t2'].forEach(function(slot){
@@ -1319,8 +1331,11 @@ function recomputeGroupWinners(bk,ct){
         if(code==='B'||code==='B2')groupIdx=1;
 
         // Resolve only if the group is complete
-        if(!isGroupComplete(groupIdx)){
-          // Mark as unresolved (keep GW_ placeholder)
+        var groupComplete=isGroupComplete(groupIdx);
+        if(window.__DEBUG_RECOMPUTE){
+          console.log('[recompute]    slot', slot, 'matchIdx', matchIdx, 'origCode:', origCode, 's:', s, 'code:', code, 'groupIdx:', groupIdx, 'complete:', groupComplete);
+        }
+        if(!groupComplete){
           m[slot]='GW_'+code+'_'+bk;
           return;
         }
@@ -2182,6 +2197,28 @@ function pB(c){
       }},has3rd?'3o Lugar: ON':'3o Lugar: OFF'));
     }
     bar.appendChild(h('button',{'class':'btn',onclick:function(){S.mod={tp:'autoSch',bkey:bkey,ct:S.bc};R()}},'Agendar Auto'));
+    // Manual trigger for finalist recomputation (debug + user request)
+    bar.appendChild(h('button',{'class':'btn',title:'Recalcular finalistas baseado nos resultados',onclick:function(){
+      try{
+        window.__DEBUG_RECOMPUTE=true;
+        console.log('=== Manual recompute triggered ===');
+        recomputeGroupWinners(bkey,S.bc);
+        window.__DEBUG_RECOMPUTE=false;
+        // Also show standings in alert
+        var rds2=S.brk[bkey]&&S.brk[bkey][S.bc]?S.brk[bkey][S.bc]:[];
+        var msg='Recálculo concluído. Veja o console (F12) para detalhes.';
+        // Try to show finalist info
+        var finalRd=rds2.find(function(r){return r.m.some(function(m){return m._slot1||m._slot2})});
+        if(finalRd){
+          msg+='\n\nFinalistas:';
+          finalRd.m.forEach(function(m){
+            msg+='\n• '+tName(m.t1)+' × '+tName(m.t2);
+          });
+        }
+        alert(msg);
+        R();
+      }catch(e){alert('Erro: '+e.message);console.error(e);}
+    }},'🔄 Recalcular'));
     bar.appendChild(h('button',{'class':'btn',style:{marginLeft:'auto'},onclick:function(){exportBracketByKey(bkey,S.bc)}},'Exportar'));
     if(bar.children.length)main.appendChild(bar);
   }
