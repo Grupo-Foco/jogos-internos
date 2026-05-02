@@ -888,10 +888,9 @@ function _buildJimRows(rows){
       });
       rounds.push(semiRnd);
 
-      if(hasFinal){
+      if(hasFinal||hasThird){
         var finalRnd={r:2,label:'Final',m:[]};
         grp.finalMatches.forEach(function(fm,fi){
-          var is3=false;
           // Link W_ from semis
           var src1=semiRnd.m[fi*2]||semiRnd.m[0];
           var src2=semiRnd.m[fi*2+1]||semiRnd.m[1]||semiRnd.m[0];
@@ -933,6 +932,22 @@ function _buildJimRows(rows){
         }
         rounds.push(finalRnd);
       }
+    } else if(hasFinal||hasThird){
+      // FALLBACK: Orphan finals/thirds without prior rounds.
+      // This happens when the dashboard records final/3rd matches but no
+      // earlier classify/semi/group rows. Treat them as resolved direct matches.
+      var directRnd={r:1,label:'Final',m:[]};
+      grp.finalMatches.forEach(function(fm){
+        var t1=tId(fm.e1)||('PH_'+u());
+        var t2=tId(fm.e2)||('PH_'+u());
+        directRnd.m.push(buildMatch(fm,t1,t2,false));
+      });
+      grp.thirdMatches.forEach(function(tm){
+        var t1=tId(tm.e1)||('PH_'+u());
+        var t2=tId(tm.e2)||('PH_'+u());
+        directRnd.m.push(buildMatch(tm,t1,t2,true));
+      });
+      rounds.push(directRnd);
     }
 
     // Assign round numbers
@@ -1045,8 +1060,13 @@ function mCleanSchool(root){
         body:JSON.stringify({data:JSON.stringify(d),updated_at:new Date().toISOString()})
       }).then(function(r){
         if(r.ok){
-          if(statusEl){statusEl.textContent='✅ '+label+' concluído!';statusEl.style.color='var(--gn)'}
-          setTimeout(function(){MT.mod=null;renderMasterPanel()},1500);
+          if(statusEl){
+            statusEl.style.background='rgba(52,211,153,.08)';
+            statusEl.style.borderColor='rgba(52,211,153,.3)';
+            statusEl.innerHTML='✅ <b>'+label+' concluído!</b><br><br>'
+              +'<span style="color:var(--am);font-size:11px">⚠️ Importante: se a aba de admin desta escola estiver aberta em outra janela, FECHE-A AGORA antes de fazer qualquer ação. Caso contrário, os dados em memória serão regravados no Supabase, desfazendo a limpeza.</span>';
+          }
+          setTimeout(function(){MT.mod=null;renderMasterPanel()},5000);
         } else {
           if(statusEl){statusEl.textContent='⚠️ Erro ao salvar (HTTP '+r.status+').';statusEl.style.color='var(--rd)'}
         }
@@ -3832,6 +3852,17 @@ function mImportBrk(root){
       });
     }
 
+    // ── REPLACE MODE: wipe competition state up-front for a clean slate ────
+    // Preserves configurations: pontuação, tiebreakers, logins, recursos, audit, app info.
+    if(mode==='replace'){
+      S.cls=[];
+      S.spt=[];
+      S.locs=[];
+      S.enr=[];
+      S.brk={};
+      S.podiums=[];
+    }
+
     // ── Merge classes (don't replace — add only NEW turmas) ─────────────────
     var existingClsByName={};
     S.cls.forEach(function(c){existingClsByName[(c.nm||'').toUpperCase().trim()]=c});
@@ -3885,15 +3916,7 @@ function mImportBrk(root){
       }
     });
 
-    // ── Replace bracket entries ─────────────────────────────────────────────
-    // In 'replace' mode: clear ALL existing brackets first (not just the imported ones).
-    // In 'preserve' mode: only override the imported brackets (other untouched).
-    if(mode==='replace'){
-      S.brk={};
-      // Also clear podiums tied to old brackets
-      S.podiums=[];
-    }
-    // Build new brackets with id-mapped turmas, then write keys.
+    // ── Build new brackets with id-mapped turmas ────────────────────────────
     Object.entries(newState.brk).forEach(function(bke){
       var bk=bke[0],cts=bke[1];
       // Remap bracket key to use existing sport id
@@ -4617,7 +4640,11 @@ function _runExport(rds,sp,bcat,title,serie){
       var hora=m._hora?'<div class="mhora">'+m._hora+(m.lc?' · '+m.lc:'')+'</div>':'';
       var dot1='<span class="tdot" style="background:'+ec(n1)+'"></span>';
       var dot2='<span class="tdot" style="background:'+ec(n2)+'"></span>';
-      rounds+='<div class="match">'+hora
+      // Distinguish 3rd-place match with a special label band on top
+      var matchLabel=m.is3rd
+        ?'<div class="mlabel third">🥉 Disputa de 3º Lugar</div>'
+        :(rdLabel==='Final'||rdLabel==='FINAL')?'<div class="mlabel final">🏆 Final</div>':'';
+      rounds+='<div class="match'+(m.is3rd?' is-third':'')+'">'+matchLabel+hora
         +'<div class="team'+w1+wo1+'"><span>'+dot1+n1+'</span>'+(m.s1!=null?'<b>'+m.s1+'</b>':'')+'</div>'
         +'<div class="team'+w2+wo2+'"><span>'+dot2+n2+'</span>'+(m.s2!=null?'<b>'+m.s2+'</b>':'')+'</div>'
         +'</div>';
@@ -4783,6 +4810,10 @@ function _runExport(rds,sp,bcat,title,serie){
     +'.round{display:flex;flex-direction:column;justify-content:center;gap:20px;flex:1;min-width:200px;padding:0 12px}'
     +'.rtitle{text-align:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:#64748b;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #1e293b}'
     +'.match{background:#111827;border:1px solid #2d3a52;border-radius:12px;overflow:hidden;margin-bottom:4px}'
+    +'.match.is-third{border-color:rgba(245,158,11,.45)}'
+    +'.mlabel{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;padding:5px 12px;text-align:center}'
+    +'.mlabel.final{background:rgba(34,211,238,.12);color:#22d3ee;border-bottom:1px solid rgba(34,211,238,.2)}'
+    +'.mlabel.third{background:rgba(245,158,11,.12);color:#f59e0b;border-bottom:1px solid rgba(245,158,11,.25)}'
     +'.mhora{font-size:10px;color:#64748b;text-align:center;padding:4px 12px;background:#0d1117;font-family:monospace}'
     +'.team{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;font-size:16px;gap:10px}'
     +'.team+.team{border-top:1px solid #1e293b}'
