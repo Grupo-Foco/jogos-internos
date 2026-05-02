@@ -3875,14 +3875,20 @@ function mImportBrk(root){
     });
 
     // ── Merge sports (add only NEW) ────────────────────────────────────────
+    // Key includes gender: "FUTEBOL|Masculino" and "FUTEBOL|Feminino" are
+    // different sport entries that the parser produces, and merging them
+    // collapses bracket keys catastrophically.
     var existingSptByName={};
-    S.spt.forEach(function(sp){existingSptByName[(sp.nm||'').toUpperCase().trim()]=sp});
+    S.spt.forEach(function(sp){
+      var k=(sp.nm||'').toUpperCase().trim()+'|'+(sp.gender||'Misto');
+      existingSptByName[k]=sp;
+    });
     var spIdMap={};
     newState.spt.forEach(function(nsp){
-      var key=(nsp.nm||'').toUpperCase().trim();
+      var key=(nsp.nm||'').toUpperCase().trim()+'|'+(nsp.gender||'Misto');
       if(existingSptByName[key]){
         spIdMap[nsp.id]=existingSptByName[key].id;
-        // Merge categories
+        // Merge categories (defensive — usually identical)
         var existing=existingSptByName[key];
         nsp.ct.forEach(function(c){if(existing.ct.indexOf(c)<0)existing.ct.push(c)});
       } else {
