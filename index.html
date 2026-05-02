@@ -650,6 +650,10 @@ function renderMasterPanel(){
             onclick:(function(code,name){return function(){
               MT.mod={tp:'cleanSchool',code:code,name:name};renderMasterPanel();
             }})(sc.code,sc.name),title:'Limpar dados da escola'},'🧹 Limpar'),
+          h('button',{'class':'btn btn-s',style:{background:'rgba(167,139,250,.15)',color:'var(--pu)',borderColor:'rgba(167,139,250,.3)'},
+            onclick:(function(sid){return function(){
+              MT.mod={tp:'schoolVersion',schoolId:sid};renderMasterPanel();
+            }})(sc.id),title:'Travar a escola em uma vers\u00e3o do app'},'🔒 Vers\u00e3o'+(sc.appVersion?': '+sc.appVersion:'')),
           h('button',{'class':'btn btn-s btn-r',onclick:(function(sid,sname){return function(){
             if(confirm('Remover escola "'+sname+'"? Os dados da escola no Supabase NÃO serão apagados.')){
               MT.schools=MT.schools.filter(function(x){return x.id!==sid});
@@ -700,6 +704,7 @@ function renderMasterPanel(){
   // Modal
   if(MT.mod&&MT.mod.tp==='addSchool')mAddSchool(root);
   if(MT.mod&&MT.mod.tp==='cleanSchool')mCleanSchool(root);
+  if(MT.mod&&MT.mod.tp==='schoolVersion')mSchoolVersion(root);
 }
 
 // -- XLSX Bracket Parser
@@ -993,6 +998,101 @@ function jimBracketDataToSchoolState(parsed,adminPass,year){
     brk[bk][b.gender]=b.rounds;
   });
   return{cls:cls,spt:spt,enr:Object.values(es),brk:brk,locs:parsed.locs,ev:{name:'Jogos Internos 2026'},logins:[],judgeLogins:[],recursos:[],adminPass:adminPass||'admin123',thirdPlace:{},appInfo:{author:'',contact:'',version:'3.0'}};
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// MASTER PANEL: Lock School to App Version
+// ══════════════════════════════════════════════════════════════════════════
+function mSchoolVersion(root){
+  var sc=MT.schools.find(function(x){return x.id===MT.mod.schoolId});
+  if(!sc){MT.mod=null;renderMasterPanel();return}
+  var ov=h('div',{'class':'ov'});
+  ov.onclick=function(e){if(e.target===ov){MT.mod=null;renderMasterPanel()}};
+  var close=function(){MT.mod=null;renderMasterPanel()};
+
+  // Known versions: null (main = index.html) and a couple of static slots.
+  // The user can also type a custom version (e.g. 'v3') if they have that
+  // file published.
+  var presets=[
+    {v:null,label:'🟢 Padr\u00e3o (em desenvolvimento)',file:'index.html',desc:'Sempre atualizado. Use para escolas em prepara\u00e7\u00e3o ou teste.'},
+    {v:'v1',label:'🔒 v1 (Marista \u2014 finalizado)',file:'v1.html',desc:'Snapshot congelado. Use para escolas que terminaram a competi\u00e7\u00e3o.'},
+    {v:'v2',label:'🔒 v2',file:'v2.html',desc:'Snapshot futuro.'}
+  ];
+  var customVer={value:''};
+
+  function applyVersion(ver){
+    sc.appVersion=ver;
+    saveMasterData(function(){
+      MT.mod=null;renderMasterPanel();
+      setTimeout(function(){
+        alert('\u2705 Vers\u00e3o atualizada para: '+(ver||'padr\u00e3o (index.html)')+
+          '\\n\\nA pr\u00f3xima vez que algu\u00e9m acessar esta escola, ser\u00e1 redirecionado automaticamente para o arquivo correto.\\n\\n'+
+          (ver?'\u26a0\ufe0f Lembre-se: o arquivo '+ver+'.html precisa estar publicado no GitHub Pages para que funcione.':''));
+      },200);
+    });
+  }
+
+  var md=h('div',{'class':'md',style:{maxWidth:'600px'}});
+  md.appendChild(h('div',{'class':'md-h'},
+    h('h3',{},'\ud83d\udd12 Vers\u00e3o do App \u2014 '+sc.name),
+    h('button',{'class':'btn btn-s',onclick:close},'\u2715')
+  ));
+
+  var body=h('div',{style:{padding:'18px 20px'}});
+  body.appendChild(h('p',{style:{fontSize:'13px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.5'}},
+    'Travar a escola em uma vers\u00e3o espec\u00edfica do app garante que ela continue funcionando exatamente como estava no momento do congelamento, mesmo que o sistema principal sofra atualiza\u00e7\u00f5es.'
+  ));
+  body.appendChild(h('div',{style:{padding:'8px 12px',background:'var(--c2)',border:'1px solid var(--br)',borderRadius:'8px',marginBottom:'14px',fontSize:'11px',color:'var(--tx3)'}},
+    'Atual: ',h('b',{style:{color:sc.appVersion?'var(--am)':'var(--gn)'}},sc.appVersion||'Padr\u00e3o (index.html)')
+  ));
+
+  presets.forEach(function(p){
+    var isCurrent=(sc.appVersion||null)===(p.v||null);
+    body.appendChild(h('button',{
+      'class':'btn',
+      style:{
+        padding:'12px 14px',
+        textAlign:'left',
+        background:isCurrent?'rgba(34,211,238,.08)':'',
+        border:'1px solid '+(isCurrent?'rgba(34,211,238,.4)':'var(--br)'),
+        marginBottom:'8px',
+        width:'100%'
+      },
+      onclick:function(){applyVersion(p.v)}
+    },
+      h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'3px'}},
+        h('span',{style:{fontWeight:'700',fontSize:'13px'}},p.label),
+        isCurrent?h('span',{style:{fontSize:'10px',color:'var(--cy)',fontWeight:'700'}},'\u2713 ATUAL'):null
+      ),
+      h('div',{style:{fontSize:'11px',color:'var(--tx3)',lineHeight:'1.4'}},p.desc),
+      h('div',{style:{fontSize:'10px',color:'var(--tx3)',marginTop:'4px',fontFamily:'monospace'}},'arquivo: '+p.file)
+    ));
+  });
+
+  // Custom version input
+  body.appendChild(h('div',{style:{height:'1px',background:'var(--br)',margin:'14px 0'}}));
+  body.appendChild(h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginBottom:'6px',textTransform:'uppercase',fontWeight:'700',letterSpacing:'.05em'}},'Vers\u00e3o customizada'));
+  var customInp=h('input',{'class':'fi',placeholder:'Ex: v3, beta, hotfix-jul',oninput:function(e){customVer.value=e.target.value.trim()}});
+  body.appendChild(h('div',{style:{display:'flex',gap:'6px'}},
+    customInp,
+    h('button',{'class':'btn btn-p',style:{whiteSpace:'nowrap'},onclick:function(){
+      if(!customVer.value){alert('Digite a vers\u00e3o.');return}
+      if(!/^[a-z0-9_-]+$/i.test(customVer.value)){alert('Use apenas letras, n\u00fameros, h\u00edfen ou underline.');return}
+      applyVersion(customVer.value);
+    }},'Aplicar')
+  ));
+
+  body.appendChild(h('div',{style:{marginTop:'14px',padding:'10px 12px',background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.25)',borderRadius:'8px',fontSize:'11px',color:'var(--tx2)',lineHeight:'1.5'}},
+    h('b',{style:{color:'var(--am)'}},'\u26a0\ufe0f Como funciona:'),h('br'),
+    '\u2022 Quando algu\u00e9m acessa esta escola, o app verifica esta vers\u00e3o e redireciona para o arquivo correspondente automaticamente.',h('br'),
+    '\u2022 O arquivo da vers\u00e3o (ex: v1.html) precisa existir no mesmo diret\u00f3rio do GitHub Pages.',h('br'),
+    '\u2022 Para criar um snapshot, basta baixar o index.html atual e renomear para vN.html antes de subir.'
+  ));
+
+  md.appendChild(body);
+  ov.appendChild(md);
+  root.appendChild(ov);
 }
 
 
@@ -6560,6 +6660,25 @@ function mSettings(root){
   },{passive:true});
 })();
 
+// *** APP VERSION ***
+// This file's version identifier. Used by the multi-version routing system:
+// - index.html (development/current) → APP_VERSION = null (or 'main')
+// - v1.html (Colégio Marista snapshot) → APP_VERSION = 'v1'
+// - v2.html, v3.html, ... → respective versions
+//
+// Each school in master_schools may have an `appVersion` field. When a
+// user accesses a school whose appVersion doesn't match this file's
+// APP_VERSION, the app redirects to the correct file. This lets a school
+// stay frozen on a known-good build while development continues elsewhere.
+var APP_VERSION=null;  // ← change this in v1.html, v2.html, etc.
+
+// Build the URL for a given version, preserving query params (except 'v')
+function _versionedUrl(version,schoolCode){
+  var base=window.location.pathname.replace(/\/[^\/]*$/,'/');
+  var file=version?(version+'.html'):'index.html';
+  return base+file+'?escola='+encodeURIComponent(schoolCode);
+}
+
 // *** Show loading screen first ***
 MT.loading=!MT.isMaster&&!!SB_DEFAULT_KEY;
 R();
@@ -6571,8 +6690,40 @@ if(SB_DEFAULT_KEY){
   S.sb.enabled=true;
 }
 
+// *** PRE-FLIGHT VERSION CHECK ***
+// Before loading school data, check whether this school is locked to a
+// specific app version, and redirect if needed. Avoids loading the wrong
+// codebase against a frozen school's data.
+function _preflightVersionCheck(callback){
+  if(!MT.schoolCode||!S.sb.url||!S.sb.key){callback();return}
+  // Allow opt-out via ?v=force (lets developer access any school in any version)
+  var params=new URLSearchParams(window.location.search);
+  if(params.get('v')==='force'){callback();return}
+  fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.master_schools&select=data',{
+    headers:{'apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key}
+  }).then(function(r){return r.json()}).then(function(rows){
+    var redirected=false;
+    if(rows&&rows.length&&rows[0].data){
+      try{
+        var schools=JSON.parse(rows[0].data);
+        var mine=schools.find(function(s){return s.code===MT.schoolCode});
+        if(mine){
+          var wantVer=mine.appVersion||null;  // null = main (index.html)
+          if(wantVer!==APP_VERSION){
+            // Redirect to the correct version file
+            window.location.replace(_versionedUrl(wantVer,MT.schoolCode));
+            redirected=true;
+          }
+        }
+      }catch(e){console.warn('Version preflight failed:',e)}
+    }
+    if(!redirected)callback();
+  }).catch(function(){callback()});
+}
+
 // *** AUTO-LOAD: Load data BEFORE allowing interaction ***
 if(S.sb.url&&S.sb.key&&!MT.isMaster){
+  _preflightVersionCheck(function(){
   loadFromSupabase(function(ok){
     MT.loading=false;
     MT.dataLoaded=true; // Flag: data has been loaded, safe to save
@@ -6610,6 +6761,7 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
       }).catch(function(){});
     }
   });
+  });  // close _preflightVersionCheck callback
 } else {
   MT.loading=false;
   MT.dataLoaded=true;
