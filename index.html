@@ -1179,11 +1179,21 @@ function recomputeGroupWinners(bk,ct){
   var rds=S.brk[bk]&&S.brk[bk][ct]?S.brk[bk][ct]:[];
   if(!rds.length)return;
 
-  // Identify rounds that are classify (no GW_/W_/L_ slots) vs final rounds
+  // Identify rounds that are classify (no GW_/W_/L_ slots) vs final rounds.
+  // BUG FIX: previously only checked m.t1. When GW_A had already been resolved
+  // to a real team id (e.g. ienr) but GW_B was still pending in m.t2, the round
+  // was wrongly classified as a "classify/group" round, so GW_B never resolved.
+  // Now we also check m.t2, plus the _slot1/_slot2 metadata which persists
+  // the original GW_/W_/L_ code even after resolution — making detection robust.
   var classifyRounds=[],finalRounds=[];
   rds.forEach(function(rd){
     var hasFinalSlot=rd.m.some(function(m){
-      return (m.t1&&(m.t1.indexOf('GW_')===0||m.t1.indexOf('W_')===0||m.t1.indexOf('L_')===0))||m.is3rd;
+      function isFinalSlot(v){
+        return v&&(v.indexOf('GW_')===0||v.indexOf('W_')===0||v.indexOf('L_')===0);
+      }
+      return isFinalSlot(m.t1)||isFinalSlot(m.t2)||
+             isFinalSlot(m._slot1)||isFinalSlot(m._slot2)||
+             m.is3rd;
     });
     if(hasFinalSlot)finalRounds.push(rd);
     else classifyRounds.push(rd);
@@ -2245,10 +2255,18 @@ function pB(c){
 
     if(!hasSemiFinal&&(isRobin||totalRounds===1||(totalRounds>1&&rds[0].m&&rds[0].m.length>=3)||hasGroups)){
       // ── Separate classify rounds from final/3rd rounds ──────────────────
+      // Same robust detection as recomputeGroupWinners: check t1, t2, and
+      // _slot1/_slot2 metadata (so the final stays a final even after one
+      // of its GW_ slots was resolved to a real team id).
       var classifyRounds=[],finalRounds=[];
       rds.forEach(function(rd){
         var hasFinalSlot=rd.m.some(function(m){
-          return m.t1&&(m.t1.indexOf('GW_')===0||m.t1.indexOf('W_')===0||m.t1.indexOf('L_')===0)||m.is3rd;
+          function isFinalSlot(v){
+            return v&&(v.indexOf('GW_')===0||v.indexOf('W_')===0||v.indexOf('L_')===0);
+          }
+          return isFinalSlot(m.t1)||isFinalSlot(m.t2)||
+                 isFinalSlot(m._slot1)||isFinalSlot(m._slot2)||
+                 m.is3rd;
         });
         if(hasFinalSlot)finalRounds.push(rd);
         else classifyRounds.push(rd);
@@ -2887,10 +2905,6 @@ function exportRankingDetail(crData){
     +'<h1>📊 Ranking Detalhado — '+S.ev.name+'</h1>'
     +'<p class="sub">Gerado em '+new Date().toLocaleString('pt-BR')+' · '+(S.bay||'Todas as séries')+'</p>'
     +rows
-    +'<div class="rules"><b>Regra de Pontuação:</b><br>'
-    +'1º: '+sc.p1+' · 2º: '+sc.p2+' · 3º: '+sc.p3+' · 4º: '+sc.p4
-    +' · 5º: '+(sc.p5||0)+' · 6º: '+(sc.p6||0)+' · 7º: '+(sc.p7||0)+' · 8º: '+(sc.p8||0)
-    +'<br>Vitória: +'+sc.pWin+' · W.O.: '+sc.pWO+'</div>'
     +'<footer>'+S.ev.name+' · Rodolfo C. Pinheiro</footer>'
     +'</body></html>';
   var blob=new Blob([out],{type:'text/html;charset=utf-8'});
