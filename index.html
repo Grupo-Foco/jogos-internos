@@ -976,7 +976,8 @@ function jimBracketDataToSchoolState(parsed,adminPass,year){
     var spId=b.sp.id,g=b.gender;
     b.rounds.forEach(function(rd){rd.m.forEach(function(m){
       [m.t1,m.t2].forEach(function(tid){
-        if(tid&&tid.indexOf('PH_')!==0){
+        // Skip ALL placeholder/structural slots — only real turma ids become enrollments.
+        if(tid&&tid!=='BYE'&&tid.indexOf('PH_')!==0&&tid.indexOf('GW_')!==0&&tid.indexOf('W_')!==0&&tid.indexOf('L_')!==0){
           var k=tid+'|'+spId+'|'+g;
           if(!es[k])es[k]={id:u(),ci:tid,si:spId,ct:g,st:'approved',tn:tidToNm[tid]||''};
         }
@@ -1581,6 +1582,14 @@ function _rodizioStandings(rd){
   });
 }
 
+// Read position points consistently. Supports both new format (sc.positions[])
+// and legacy format (sc.p1, sc.p2, ...). Returns 0 when undefined.
+function _pospts(rank){
+  var sc=S.scoring||{};
+  if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;
+  return sc['p'+rank]||0;
+}
+
 function calcRk(){
   var sc=S.scoring||{p1:10,p2:8,p3:6,p4:4,pWin:3,pWO:-2};
   var pts={};
@@ -1708,12 +1717,15 @@ function calcCR(){
       pts[x.ci]+=x.p;
     }
   });
-  // Add podium points (individual sports) p1-p8
-  var sc=S.scoring||{p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1};
+  // Add podium points (individual sports) p1-p8 — uses _pospts so it works
+  // with both new sc.positions[] format and legacy sc.p1..p8.
   (S.podiums||[]).forEach(function(pod){
     for(var i=1;i<=8;i++){
       var k='p'+i;
-      if(pod[k]){pts[pod[k]]=(pts[pod[k]]||0)+(sc[k]||0)}
+      if(pod[k]){
+        var pv=_pospts(i);
+        if(pv)pts[pod[k]]=(pts[pod[k]]||0)+pv;
+      }
     }
   });
   // Add recurso punishment points
@@ -2186,6 +2198,33 @@ function pEA(c){
     c.appendChild(ytabs);
   }
   var list=S.bay?S.enr.filter(function(e){var cl=S.cls.find(function(x){return x.id===e.ci});return cl&&cl.yr===S.bay}):S.enr;
+
+  // ── Sort by série/turma: 1º ANO, 2º ANO ... 9º ANO, 1ª SÉRIE, 2ª SÉRIE, 3ª SÉRIE, ENS. MÉDIO ──
+  function _serieRank(nm){
+    var up=(nm||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
+    // Xª SÉRIE → rank 10+X (after 9º ANO). Check first because "1ª" uses ª (not º)
+    var mSer=up.match(/^(\d+)[\u00baª]\s*S[ÉE]RIE/);
+    if(mSer)return 10+(parseInt(mSer[1])||0);
+    // Xº ANO (with explicit "ANO") OR bare "Xº COLOR" (no "ANO" word) → rank by X
+    var mAno=up.match(/^(\d+)[\u00ba]?\s*ANO/)||up.match(/^(\d+)[\u00ba]\s+/);
+    if(mAno)return parseInt(mAno[1])||99;
+    // ENS. MÉDIO without série marker → after séries
+    if(/ENS\.?\s*M[EÉ]DIO/.test(up))return 20;
+    return 99;
+  }
+  list=list.slice().sort(function(a,b){
+    var ca=S.cls.find(function(x){return x.id===a.ci});
+    var cb=S.cls.find(function(x){return x.id===b.ci});
+    var ra=_serieRank(ca&&ca.nm),rb=_serieRank(cb&&cb.nm);
+    if(ra!==rb)return ra-rb;
+    var na=(ca&&ca.nm)||'',nb=(cb&&cb.nm)||'';
+    if(na!==nb)return na.localeCompare(nb,'pt');
+    var sa=S.spt.find(function(x){return x.id===a.si});
+    var sb=S.spt.find(function(x){return x.id===b.si});
+    var sna=(sa&&sa.nm)||'',snb=(sb&&sb.nm)||'';
+    if(sna!==snb)return sna.localeCompare(snb,'pt');
+    return (a.ct||'').localeCompare(b.ct||'','pt');
+  });
   var rows=!list.length?[h('tr',{},h('td',{colspan:'7'},h('div',{'class':'em'},'Nenhuma inscrição')))]
     :list.map(function(e){
       var cl=S.cls.find(function(x){return x.id===e.ci}),sp=S.spt.find(function(x){return x.id===e.si});
@@ -3301,14 +3340,15 @@ function calcClassDetail(classId){
     });
   });
 
-  // Podium points (individual sports)
+  // Podium points (individual sports) — uses _pospts (supports sc.positions)
   var posLabels=['','1º Lugar','2º Lugar','3º Lugar','4º Lugar','5º Lugar','6º Lugar','7º Lugar','8º Lugar'];
   (S.podiums||[]).forEach(function(pod){
     var sp=S.spt.find(function(s){return s.id===pod.sportId});
     var spName=sp?sp.nm:'Individual';
     for(var i=1;i<=8;i++){
-      if(pod['p'+i]===classId&&sc['p'+i]){
-        lines.push({desc:'🏅 <b>'+spName+(pod.category?' '+pod.category:'')+'</b> — '+posLabels[i],pts:sc['p'+i]});
+      if(pod['p'+i]===classId){
+        var pv=_pospts(i);
+        if(pv)lines.push({desc:'🏅 <b>'+spName+(pod.category?' '+pod.category:'')+'</b> — '+posLabels[i],pts:pv});
       }
     }
   });
@@ -5873,12 +5913,18 @@ function pIndividual(c){
   if(!S.podiums.length){
     c.appendChild(h('div',{'class':'card'},h('div',{'class':'card-b'},h('div',{'class':'em'},'Nenhum pódio registrado. Clique em "+ Novo Pódio".'))));
   } else {
-    var sc=S.scoring||{p1:10,p2:8,p3:6};
+    var posMeta=[
+      {k:'p1',label:'🥇 1º Lugar',color:'#f59e0b',bg:'linear-gradient(135deg,#fbbf2422,#f59e0b22)',br:'#f59e0b44'},
+      {k:'p2',label:'🥈 2º Lugar',color:'#94a3b8',bg:'linear-gradient(135deg,#94a3b822,#64748b22)',br:'#64748b44'},
+      {k:'p3',label:'🥉 3º Lugar',color:'#fb923c',bg:'linear-gradient(135deg,#fb923c22,#ea580c22)',br:'#ea580c44'},
+      {k:'p4',label:'4º Lugar',color:'#22d3ee',bg:'linear-gradient(135deg,#22d3ee22,#0891b222)',br:'#0891b244'},
+      {k:'p5',label:'5º Lugar',color:'#a78bfa',bg:'linear-gradient(135deg,#a78bfa22,#7c3aed22)',br:'#7c3aed44'},
+      {k:'p6',label:'6º Lugar',color:'#06b6d4',bg:'linear-gradient(135deg,#06b6d422,#0891b222)',br:'#06b6d444'},
+      {k:'p7',label:'7º Lugar',color:'#84cc16',bg:'linear-gradient(135deg,#84cc1622,#65a30d22)',br:'#84cc1644'},
+      {k:'p8',label:'8º Lugar',color:'#ec4899',bg:'linear-gradient(135deg,#ec489922,#be185d22)',br:'#ec489944'}
+    ];
     S.podiums.forEach(function(pod){
       var sp=S.spt.find(function(s){return s.id===pod.sportId});
-      var c1=S.cls.find(function(x){return x.id===pod.p1});
-      var c2=S.cls.find(function(x){return x.id===pod.p2});
-      var c3=S.cls.find(function(x){return x.id===pod.p3});
       var card=h('div',{'class':'card',style:{marginBottom:'12px'}});
       card.appendChild(h('div',{'class':'card-h'},
         h('div',{style:{display:'flex',alignItems:'center',gap:'8px'}},
@@ -5892,24 +5938,22 @@ function pIndividual(c){
           if(confirm('Remover este pódio?'))S.podiums=S.podiums.filter(function(x){return x.id!==pid});R();
         }})(pod.id)},'🗑')
       ));
-      // Podium display
-      card.appendChild(h('div',{'class':'card-b',style:{display:'flex',gap:'12px',justifyContent:'center',flexWrap:'wrap'}},
-        h('div',{style:{textAlign:'center',padding:'12px 20px',borderRadius:'12px',background:'linear-gradient(135deg,#fbbf2422,#f59e0b22)',border:'1px solid #f59e0b44',minWidth:'100px'}},
-          h('div',{style:{fontSize:'24px'}},'🥇'),
-          h('div',{style:{fontWeight:'800',fontSize:'14px',color:'#f59e0b'}},c1?c1.nm:'—'),
-          h('div',{style:{fontSize:'10px',color:'var(--tx3)'}},sc.p1+' pts')
-        ),
-        h('div',{style:{textAlign:'center',padding:'12px 20px',borderRadius:'12px',background:'linear-gradient(135deg,#94a3b822,#64748b22)',border:'1px solid #64748b44',minWidth:'100px'}},
-          h('div',{style:{fontSize:'24px'}},'🥈'),
-          h('div',{style:{fontWeight:'800',fontSize:'14px',color:'#94a3b8'}},c2?c2.nm:'—'),
-          h('div',{style:{fontSize:'10px',color:'var(--tx3)'}},sc.p2+' pts')
-        ),
-        h('div',{style:{textAlign:'center',padding:'12px 20px',borderRadius:'12px',background:'linear-gradient(135deg,#fb923c22,#ea580c22)',border:'1px solid #ea580c44',minWidth:'100px'}},
-          h('div',{style:{fontSize:'24px'}},'🥉'),
-          h('div',{style:{fontWeight:'800',fontSize:'14px',color:'#fb923c'}},c3?c3.nm:'—'),
-          h('div',{style:{fontSize:'10px',color:'var(--tx3)'}},sc.p3+' pts')
-        )
-      ));
+      // Podium display — render only filled positions, supports up to 8
+      var podiumRow=h('div',{'class':'card-b',style:{display:'flex',gap:'10px',justifyContent:'center',flexWrap:'wrap'}});
+      var anyFilled=false;
+      posMeta.forEach(function(pm,idx){
+        var tid=pod[pm.k];if(!tid)return;
+        anyFilled=true;
+        var cl=S.cls.find(function(x){return x.id===tid});
+        var pv=_pospts(idx+1);
+        podiumRow.appendChild(h('div',{style:{textAlign:'center',padding:'10px 16px',borderRadius:'12px',background:pm.bg,border:'1px solid '+pm.br,minWidth:'100px'}},
+          h('div',{style:{fontSize:'11px',fontWeight:'700',color:pm.color,marginBottom:'4px',letterSpacing:'.04em'}},pm.label),
+          h('div',{style:{fontWeight:'800',fontSize:'13px',color:pm.color}},cl?cl.nm:'—'),
+          h('div',{style:{fontSize:'10px',color:'var(--tx3)',marginTop:'2px'}},pv+' pts')
+        ));
+      });
+      if(!anyFilled)podiumRow.appendChild(h('div',{style:{color:'var(--tx3)',fontSize:'12px',padding:'12px'}},'Sem posições preenchidas.'));
+      card.appendChild(podiumRow);
       if(pod.notes)card.appendChild(h('div',{style:{padding:'8px 16px',fontSize:'11px',color:'var(--tx3)'}},pod.notes));
       c.appendChild(card);
     });
