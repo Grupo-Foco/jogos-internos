@@ -646,6 +646,10 @@ function renderMasterPanel(){
             var s2=MT.schools.find(function(x){return x.id===sid});
             if(s2){s2.status=s2.status==='inactive'?'active':'inactive';saveMasterData(function(){renderMasterPanel()})}
           }})(sc.id)},isActive?'⏸ Desativar':'▶ Ativar'),
+          h('button',{'class':'btn btn-s',style:{background:'rgba(251,191,36,.15)',color:'var(--am)',borderColor:'rgba(251,191,36,.3)'},
+            onclick:(function(code,name){return function(){
+              MT.mod={tp:'cleanSchool',code:code,name:name};renderMasterPanel();
+            }})(sc.code,sc.name),title:'Limpar dados da escola'},'🧹 Limpar'),
           h('button',{'class':'btn btn-s btn-r',onclick:(function(sid,sname){return function(){
             if(confirm('Remover escola "'+sname+'"? Os dados da escola no Supabase NÃO serão apagados.')){
               MT.schools=MT.schools.filter(function(x){return x.id!==sid});
@@ -695,6 +699,7 @@ function renderMasterPanel(){
 
   // Modal
   if(MT.mod&&MT.mod.tp==='addSchool')mAddSchool(root);
+  if(MT.mod&&MT.mod.tp==='cleanSchool')mCleanSchool(root);
 }
 
 // -- XLSX Bracket Parser
@@ -974,6 +979,156 @@ function jimBracketDataToSchoolState(parsed,adminPass,year){
   return{cls:cls,spt:spt,enr:Object.values(es),brk:brk,locs:parsed.locs,ev:{name:'Jogos Internos 2026'},logins:[],judgeLogins:[],recursos:[],adminPass:adminPass||'admin123',thirdPlace:{},appInfo:{author:'',contact:'',version:'3.0'}};
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════
+// MASTER PANEL: Clean School Data Modal
+// ══════════════════════════════════════════════════════════════════════════
+function mCleanSchool(root){
+  var code=MT.mod.code,name=MT.mod.name;
+  var ov=h('div',{'class':'ov'});
+  ov.onclick=function(e){if(e.target===ov){MT.mod=null;renderMasterPanel()}};
+  var close=function(){MT.mod=null;renderMasterPanel()};
+
+  // Apply cleanup to the school by reading current state, mutating, and writing back
+  function performClean(action,label){
+    if(!S.sb.url||!S.sb.key){alert('Supabase não configurado.');return}
+    var statusEl=document.getElementById('clean-status');
+    if(statusEl){statusEl.style.display='block';statusEl.textContent='⏳ Processando...';statusEl.style.color='var(--am)'}
+
+    fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.escola_'+encodeURIComponent(code)+'&select=data',{
+      headers:{'apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key}
+    }).then(function(r){return r.json()}).then(function(rows){
+      if(!rows||!rows.length||!rows[0].data){
+        if(statusEl){statusEl.textContent='⚠️ Escola sem dados ou não encontrada.';statusEl.style.color='var(--rd)'}
+        return;
+      }
+      var d;try{d=JSON.parse(rows[0].data)}catch(e){
+        if(statusEl){statusEl.textContent='⚠️ Erro lendo dados.';statusEl.style.color='var(--rd)'}
+        return;
+      }
+
+      // Apply the requested action
+      if(action==='clearBrk'){
+        // Clear bracket + schedule + scores. Preserve turmas, sports, venues, scoring rules, logins, audit, recursos.
+        d.brk={};
+        // Also clear individual podiums (since they tie to bracket finals)
+        d.podiums=[];
+        // Reset enrollment status if any (keep enrollments themselves)
+      } else if(action==='clearAll'){
+        // Wipe everything except the school registration meta
+        d.cls=[];
+        d.spt=[];
+        d.locs=[];
+        d.enr=[];
+        d.brk={};
+        d.podiums=[];
+        d.recursos=[];
+        // Keep: ev (event name), adminPass, logins, judgeLogins, scoring config, tiebreakers, appInfo, auditLog
+      } else if(action==='clearTurmas'){
+        d.cls=[];
+        d.enr=[];
+        d.brk={};
+        d.podiums=[];
+      } else if(action==='clearEsportes'){
+        d.spt=[];
+        d.enr=[];
+        d.brk={};
+        d.podiums=[];
+      } else if(action==='clearLocais'){
+        d.locs=[];
+      }
+
+      // Write back
+      fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.escola_'+encodeURIComponent(code),{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json','apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key,'Prefer':'return=minimal'},
+        body:JSON.stringify({data:JSON.stringify(d),updated_at:new Date().toISOString()})
+      }).then(function(r){
+        if(r.ok){
+          if(statusEl){statusEl.textContent='✅ '+label+' concluído!';statusEl.style.color='var(--gn)'}
+          setTimeout(function(){MT.mod=null;renderMasterPanel()},1500);
+        } else {
+          if(statusEl){statusEl.textContent='⚠️ Erro ao salvar (HTTP '+r.status+').';statusEl.style.color='var(--rd)'}
+        }
+      }).catch(function(e){
+        if(statusEl){statusEl.textContent='⚠️ Erro: '+e.message;statusEl.style.color='var(--rd)'}
+      });
+    }).catch(function(e){
+      if(statusEl){statusEl.textContent='⚠️ Erro lendo escola: '+e.message;statusEl.style.color='var(--rd)'}
+    });
+  }
+
+  function confirmAndClean(action,label,detail){
+    if(confirm('⚠️ '+label+' da escola "'+name+'"?\n\n'+detail+'\n\nEsta ação NÃO pode ser desfeita.')){
+      performClean(action,label);
+    }
+  }
+
+  var md=h('div',{'class':'md',style:{maxWidth:'620px'}});
+  md.appendChild(h('div',{'class':'md-h'},
+    h('h3',{},'🧹 Limpar Dados — '+name),
+    h('button',{'class':'btn btn-s',onclick:close},'✕')
+  ));
+
+  var body=h('div',{style:{padding:'18px 20px'}});
+  body.appendChild(h('p',{style:{fontSize:'13px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.5'}},
+    'Selecione o que deseja limpar. Cada ação é permanente e afeta apenas esta escola. Os dados de cadastro da escola (nome, código, senha admin, logins) são sempre preservados.'));
+
+  function btn(label,desc,color,bg,action,detail){
+    return h('button',{'class':'btn',style:{padding:'14px 16px',textAlign:'left',background:bg,border:'1px solid '+color,marginBottom:'8px',width:'100%'},
+      onclick:function(){confirmAndClean(action,label,detail)}},
+      h('div',{style:{fontWeight:'700',color:color,marginBottom:'4px',fontSize:'14px'}},label),
+      h('div',{style:{fontSize:'11px',color:'var(--tx3)',lineHeight:'1.4'}},desc)
+    );
+  }
+
+  body.appendChild(btn(
+    '🏟️ Limpar Chaveamento + Resultados',
+    'Apaga todos os confrontos, placares, agendamentos e pódios. Preserva turmas, esportes, locais, inscrições e pontuação.',
+    'var(--cy)','rgba(34,211,238,.06)','clearBrk',
+    'Os chaveamentos, agendas e placares serão apagados. Os cadastros (turmas, esportes, locais) ficam intactos.'
+  ));
+
+  body.appendChild(btn(
+    '🏫 Limpar Turmas',
+    'Apaga todas as turmas, inscrições, chaveamentos e pódios. Preserva esportes, locais e pontuação.',
+    '#a78bfa','rgba(167,139,250,.06)','clearTurmas',
+    'Todas as turmas e seus dados relacionados (inscrições, chaveamento) serão apagados.'
+  ));
+
+  body.appendChild(btn(
+    '⚽ Limpar Esportes',
+    'Apaga todos os esportes, inscrições, chaveamentos e pódios. Preserva turmas, locais e pontuação.',
+    'var(--gn)','rgba(52,211,153,.06)','clearEsportes',
+    'Todos os esportes e seus dados relacionados (inscrições, chaveamento) serão apagados.'
+  ));
+
+  body.appendChild(btn(
+    '📍 Limpar Locais',
+    'Apaga todos os locais cadastrados. Não afeta confrontos já agendados.',
+    'var(--am)','rgba(251,191,36,.06)','clearLocais',
+    'Todos os locais cadastrados serão apagados. Os jogos com local atribuído manterão a referência por nome.'
+  ));
+
+  body.appendChild(h('div',{style:{height:'1px',background:'var(--br)',margin:'14px 0'}}));
+
+  body.appendChild(btn(
+    '💥 Limpar TUDO (turmas, esportes, locais, chaveamento, resultados)',
+    'Zera completamente os dados de competição. Preserva apenas o cadastro da escola (nome, senha admin, logins, configurações e auditoria).',
+    'var(--rd)','rgba(239,68,68,.06)','clearAll',
+    'TUDO será apagado: turmas, esportes, locais, inscrições, chaveamentos, agenda, placares, pódios e recursos. Apenas o cadastro da escola e configurações de acesso permanecem.'
+  ));
+
+  body.appendChild(h('div',{id:'clean-status',style:{display:'none',marginTop:'12px',padding:'10px 14px',background:'rgba(34,211,238,.06)',border:'1px solid rgba(34,211,238,.2)',borderRadius:'8px',fontSize:'12px',fontWeight:'600',textAlign:'center'}}));
+
+  body.appendChild(h('div',{style:{marginTop:'14px',display:'flex',justifyContent:'flex-end'}},
+    h('button',{'class':'btn btn-s',onclick:close},'Fechar')
+  ));
+
+  md.appendChild(body);
+  ov.appendChild(md);
+  root.appendChild(ov);
+}
 
 function mAddSchool(root){
   var f={name:'',code:'',city:'',contact:'',adminPass:'admin123'};
@@ -1703,6 +1858,7 @@ function R(){
   root.appendChild(mainDiv);
   root.appendChild(bnav);
   if(S.mod&&S.mod.tp==='settings')mSettings(root);
+  if(S.mod&&S.mod.tp==='importBrk')mImportBrk(root);
   if(S.mod&&S.mod.tp==='result'){
     // Find the match object from brk using mid+bk+ct
     var _bk=S.mod.bk,_ct=S.mod.ct,_mid=S.mod.mid;
@@ -1751,7 +1907,8 @@ function pD(c){
       h('div',{'class':'fw'},
         h('button',{'class':'btn-d',onclick:dlTpl},'📄 Modelo'),
         h('button',{'class':'btn-d',style:{background:'linear-gradient(135deg,var(--gn),var(--pr))'},onclick:dlExp},'📊 Exportar'),
-        h('button',{'class':'btn-d',style:{background:'linear-gradient(135deg,var(--pu),var(--pr))'},onclick:function(){S.page='import';R()}},'📤 Importar')
+        h('button',{'class':'btn-d',style:{background:'linear-gradient(135deg,var(--pu),var(--pr))'},onclick:function(){S.page='import';R()}},'📤 Importar'),
+        h('button',{'class':'btn-d',style:{background:'linear-gradient(135deg,#22d3ee,#8b5cf6)'},onclick:function(){S.mod={tp:'importBrk'};R()}},'🏟️ Importar Chaveamento')
       )
     ));
   }
@@ -2784,7 +2941,10 @@ function pR(c){
       h('button',{'class':'tab'+(S.rt==='class'?' active':''),onclick:function(){S.rt='class';R()}},'Turmas'),
       h('button',{'class':'tab'+(S.rt==='team'?' active':''),onclick:function(){S.rt='team';R()}},'Equipes')
     ),
-    S.role==='admin'?h('button',{'class':'btn btn-p btn-s',onclick:function(){exportRankingDetail(crF)}},'📊 Exportar Detalhado'):null
+    S.role==='admin'?h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
+      h('button',{'class':'btn btn-s',onclick:function(){exportRankingResumido(crF,rkF)}},'📋 Exportar Resumido'),
+      h('button',{'class':'btn btn-p btn-s',onclick:function(){exportRankingDetail(crF)}},'📊 Exportar Detalhado')
+    ):null
   ));
 
   var ls=S.rt==='class'?crF:rkF;
@@ -2987,6 +3147,70 @@ function calcClassDetail(classId){
 
   var summary=totalWins+'V'+(totalWO?' '+totalWO+'WO':'')+(lines.length?' · '+lines.length+' item(ns)':'');
   return{lines:lines,summary:summary};
+}
+
+// Export resumed ranking (just the leaderboard, no breakdown). For publication.
+function exportRankingResumido(crData,rkData){
+  var serie=S.bay||'';
+  var serieFilter=S.rkSerie||'';
+  var rows='';
+  // Top 3 highlight
+  crData.forEach(function(r,i){
+    var pos=i+1;
+    var posIco=i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+    var posCol=i===0?'#fbbf24':i===1?'#94a3b8':i===2?'#fb923c':'#64748b';
+    var bg=i===0?'rgba(251,191,36,.08)':i===1?'rgba(148,163,184,.06)':i===2?'rgba(251,146,60,.06)':'';
+    rows+='<tr style="background:'+bg+'">'
+      +'<td class="pos" style="color:'+posCol+'"><span class="ico">'+posIco+'</span>'+pos+'º</td>'
+      +'<td class="nm">'+r.nm+'</td>'
+      +'<td class="pts">'+r.p+'</td>'
+      +'</tr>';
+  });
+  if(!rows)rows='<tr><td colspan="3" style="text-align:center;color:#64748b;padding:24px">Sem resultados</td></tr>';
+
+  var subtitle='Gerado em '+new Date().toLocaleString('pt-BR');
+  if(serie)subtitle+=' · '+serie;
+  if(serieFilter)subtitle+=' · '+serieFilter;
+
+  var out='<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">'
+    +'<meta name="viewport" content="width=device-width,initial-scale=1">'
+    +'<title>Ranking — '+S.ev.name+'</title>'
+    +'<style>'
+    +'*{margin:0;padding:0;box-sizing:border-box}'
+    +'body{font-family:-apple-system,system-ui,Arial,sans-serif;background:#0a0e1a;color:#f1f5f9;padding:32px;min-height:100vh}'
+    +'.cont{max-width:760px;margin:0 auto}'
+    +'h1{font-size:30px;font-weight:800;color:#22d3ee;letter-spacing:-.5px;margin-bottom:6px;display:flex;align-items:center;gap:10px}'
+    +'.sub{font-size:13px;color:#64748b;margin-bottom:28px}'
+    +'table{width:100%;border-collapse:collapse;background:#111827;border:1px solid #2d3a52;border-radius:14px;overflow:hidden}'
+    +'thead th{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;padding:14px 16px;border-bottom:2px solid #1e293b;text-align:left;background:#0d1117}'
+    +'thead th.pts{text-align:right;color:#22d3ee}'
+    +'td{padding:14px 16px;border-bottom:1px solid #1a2235;vertical-align:middle}'
+    +'tr:last-child td{border-bottom:none}'
+    +'td.pos{font-weight:800;font-size:15px;width:90px;font-family:"Space Mono",monospace}'
+    +'td.pos .ico{margin-right:6px;font-size:18px}'
+    +'td.nm{font-size:16px;font-weight:600;color:#f1f5f9}'
+    +'td.pts{text-align:right;font-family:"Space Mono",monospace;font-size:18px;font-weight:800;color:#22d3ee;width:110px}'
+    +'footer{margin-top:32px;font-size:11px;color:#334155;text-align:center}'
+    +'@media print{body{background:#fff;color:#1a1f2e;padding:18px}'
+    +'h1{color:#0891b2}.sub{color:#64748b}'
+    +'table{background:#fff;border-color:#e2e8f0}'
+    +'thead th{background:#f8fafc;color:#475569;border-color:#e2e8f0}'
+    +'thead th.pts{color:#0891b2}'
+    +'td{border-color:#e2e8f0}td.nm{color:#1a1f2e}td.pts{color:#0891b2}'
+    +'footer{color:#94a3b8}}'
+    +'</style></head><body>'
+    +'<div class="cont">'
+    +'<h1>🏆 Ranking — '+S.ev.name+'</h1>'
+    +'<p class="sub">'+subtitle+'</p>'
+    +'<table><thead><tr>'
+    +'<th>Posição</th><th>Turma</th><th class="pts">Pontos</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody></table>'
+    +'<footer>'+S.ev.name+' · Rodolfo C. Pinheiro</footer>'
+    +'</div></body></html>';
+  var blob=new Blob([out],{type:'text/html;charset=utf-8'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='ranking_resumido_'+new Date().toISOString().slice(0,10)+'.html';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);
 }
 
 // Export detailed ranking as standalone HTML
@@ -3528,6 +3752,297 @@ function mRes(c){
   ));
   c.appendChild(ov);
 }
+// ══════════════════════════════════════════════════════════════════════════
+// IMPORT BRACKET MODAL — re-import bracket file from Dashboard
+// ══════════════════════════════════════════════════════════════════════════
+function mImportBrk(root){
+  // step: 'choose' (file picker) | 'preview' (show parsed) | 'mode' (preserve/replace)
+  if(!S.mod.step)S.mod.step='choose';
+  if(!S.mod.parsed)S.mod.parsed=null;
+  if(!S.mod.err)S.mod.err='';
+
+  var ov=h('div',{'class':'ov'});
+  ov.onclick=function(e){if(e.target===ov){S.mod=null;R()}};
+  var md=h('div',{'class':'md',style:{maxWidth:'620px'}});
+
+  function close(){S.mod=null;R()}
+
+  function handleFile(file){
+    if(!file)return;
+    var ext=(file.name||'').split('.').pop().toLowerCase();
+    if(ext==='html'){
+      var r=new FileReader();
+      r.onload=function(ev){
+        try{
+          var p=parseJimHtmlForBrackets(ev.target.result);
+          if(!p||!Object.keys(p.brackets).length){S.mod.err='HTML sem confrontos detectados.';mImportBrk(root);return}
+          S.mod.parsed=p;S.mod.err='';S.mod.step='preview';mImportBrk(root);
+        }catch(e){S.mod.err='Erro ao ler HTML: '+e.message;mImportBrk(root)}
+      };
+      r.readAsText(file);
+    } else if(ext==='xlsx'||ext==='xls'){
+      var r2=new FileReader();
+      r2.onload=function(ev){
+        try{
+          XLSXMini.read(ev.target.result).then(function(wb){
+            if(!wb){S.mod.err='Não foi possível ler o XLSX.';mImportBrk(root);return}
+            var p=parseJimXlsx(wb);
+            if(!p||!Object.keys(p.brackets).length){S.mod.err='Planilha sem confrontos. Verifique colunas EQUIPE 1, EQUIPE 2, MODALIDADE, FASE.';mImportBrk(root);return}
+            S.mod.parsed=p;S.mod.err='';S.mod.step='preview';mImportBrk(root);
+          }).catch(function(e){S.mod.err='Erro: '+e.message;mImportBrk(root)});
+        }catch(e){S.mod.err='Erro ao ler XLSX: '+e.message;mImportBrk(root)}
+      };
+      r2.readAsArrayBuffer(file);
+    } else {
+      S.mod.err='Use arquivo .html ou .xlsx';mImportBrk(root);
+    }
+  }
+
+  // Apply imported brackets. mode = 'replace' (zero scores) | 'preserve' (keep matching results)
+  function applyImport(mode){
+    var parsed=S.mod.parsed;if(!parsed)return;
+    var year=S.bay||(getAnos()[0])||'JOGOS 2026';
+    // Convert via existing helper, but extract only the cls/spt/enr/brk we need (we don't reset other state)
+    var newState=jimBracketDataToSchoolState(parsed,'',year);
+
+    // ── Build score lookup from CURRENT state, by (turma1+turma2+sport+gender+serie) key ─
+    // Used in 'preserve' mode to carry forward results.
+    function matchKey(t1,t2,sp,gen,serie){
+      var pair=[t1||'',t2||''].sort().join('|');
+      return pair+'|'+(sp||'')+'|'+(gen||'')+'|'+(serie||'');
+    }
+    var scoreCache={};
+    if(mode==='preserve'){
+      Object.entries(S.brk).forEach(function(bke){
+        var bk=bke[0],cts=bke[1];
+        var parts=bk.split('__');
+        var spId=parts[1]||'';
+        var serie=parts[2]||'GERAL';
+        Object.entries(cts).forEach(function(e2){
+          var gen=e2[0],rds=e2[1];
+          rds.forEach(function(rd){rd.m.forEach(function(m){
+            if(m.s1==null||m.s2==null)return;
+            // Only cache real-team matches
+            function isReal(t){return t&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0&&t!=='BYE'}
+            if(!isReal(m.t1)||!isReal(m.t2))return;
+            var t1nm=tName(m.t1),t2nm=tName(m.t2);
+            scoreCache[matchKey(t1nm,t2nm,spId,gen,serie)]={s1:m.s1,s2:m.s2,w:m.w,isDraw:m.isDraw,cards:m.cards,wo:m.wo};
+          })});
+        });
+      });
+    }
+
+    // ── Merge classes (don't replace — add only NEW turmas) ─────────────────
+    var existingClsByName={};
+    S.cls.forEach(function(c){existingClsByName[(c.nm||'').toUpperCase().trim()]=c});
+    // Build mapping from imported turma id -> existing turma id (when names match)
+    var idMap={};
+    newState.cls.forEach(function(nc){
+      var key=(nc.nm||'').toUpperCase().trim();
+      if(existingClsByName[key])idMap[nc.id]=existingClsByName[key].id;
+      else {S.cls.push(nc);idMap[nc.id]=nc.id;existingClsByName[key]=nc;}
+    });
+
+    // ── Merge sports (add only NEW) ────────────────────────────────────────
+    var existingSptByName={};
+    S.spt.forEach(function(sp){existingSptByName[(sp.nm||'').toUpperCase().trim()]=sp});
+    var spIdMap={};
+    newState.spt.forEach(function(nsp){
+      var key=(nsp.nm||'').toUpperCase().trim();
+      if(existingSptByName[key]){
+        spIdMap[nsp.id]=existingSptByName[key].id;
+        // Merge categories
+        var existing=existingSptByName[key];
+        nsp.ct.forEach(function(c){if(existing.ct.indexOf(c)<0)existing.ct.push(c)});
+      } else {
+        S.spt.push(nsp);spIdMap[nsp.id]=nsp.id;existingSptByName[key]=nsp;
+      }
+    });
+
+    // ── Merge venues (add only NEW) ────────────────────────────────────────
+    if(newState.locs&&newState.locs.length){
+      var existingLocsByName={};
+      (S.locs||[]).forEach(function(l){existingLocsByName[(l.nm||'').toUpperCase().trim()]=l});
+      newState.locs.forEach(function(nl){
+        var key=(nl.nm||'').toUpperCase().trim();
+        if(!existingLocsByName[key]){
+          if(!S.locs)S.locs=[];
+          S.locs.push(nl);existingLocsByName[key]=nl;
+        }
+      });
+    }
+
+    // ── Merge enrollments (add only NEW for the imported brackets) ─────────
+    var existingEnrKey={};
+    S.enr.forEach(function(e){existingEnrKey[e.ci+'|'+e.si+'|'+e.ct]=e});
+    newState.enr.forEach(function(ne){
+      var ci=idMap[ne.ci]||ne.ci;
+      var si=spIdMap[ne.si]||ne.si;
+      var k=ci+'|'+si+'|'+ne.ct;
+      if(!existingEnrKey[k]){
+        ne.ci=ci;ne.si=si;
+        S.enr.push(ne);existingEnrKey[k]=ne;
+      }
+    });
+
+    // ── Replace bracket entries ─────────────────────────────────────────────
+    // In 'replace' mode: clear ALL existing brackets first (not just the imported ones).
+    // In 'preserve' mode: only override the imported brackets (other untouched).
+    if(mode==='replace'){
+      S.brk={};
+      // Also clear podiums tied to old brackets
+      S.podiums=[];
+    }
+    // Build new brackets with id-mapped turmas, then write keys.
+    Object.entries(newState.brk).forEach(function(bke){
+      var bk=bke[0],cts=bke[1];
+      // Remap bracket key to use existing sport id
+      var parts=bk.split('__');
+      var bkYear=parts[0],spId=parts[1],serie=parts[2]||'GERAL';
+      var newSpId=spIdMap[spId]||spId;
+      var newBk=bkYear+'__'+newSpId+(serie&&serie!=='GERAL'?'__'+serie:'__GERAL');
+
+      // Remap turma ids in matches
+      var newCts={};
+      Object.entries(cts).forEach(function(e2){
+        var gen=e2[0],rds=e2[1];
+        var newRds=rds.map(function(rd){
+          return Object.assign({},rd,{m:rd.m.map(function(m){
+            var nm=Object.assign({},m);
+            if(nm.t1&&idMap[nm.t1])nm.t1=idMap[nm.t1];
+            if(nm.t2&&idMap[nm.t2])nm.t2=idMap[nm.t2];
+            // In preserve mode, restore score from cache if confronto matches
+            if(mode==='preserve'){
+              function isReal(t){return t&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0&&t!=='BYE'}
+              if(isReal(nm.t1)&&isReal(nm.t2)){
+                var t1nm=tName(nm.t1),t2nm=tName(nm.t2);
+                var ck=matchKey(t1nm,t2nm,newSpId,gen,serie);
+                var cached=scoreCache[ck];
+                if(cached){
+                  nm.s1=cached.s1;nm.s2=cached.s2;nm.w=cached.w;
+                  nm.isDraw=cached.isDraw;
+                  if(cached.cards)nm.cards=cached.cards;
+                  if(cached.wo)nm.wo=cached.wo;
+                }
+              }
+            }
+            return nm;
+          })});
+        });
+        newCts[gen]=newRds;
+      });
+      S.brk[newBk]=newCts;
+    });
+
+    // Recompute group winners for all new brackets (resolves GW_ slots)
+    Object.keys(S.brk).forEach(function(bk){
+      Object.keys(S.brk[bk]).forEach(function(ct){
+        try{recomputeGroupWinners(bk,ct)}catch(e){}
+      });
+    });
+
+    var summary=Object.keys(newState.brk).length+' chaveamento(s) importado(s).';
+    if(mode==='preserve'){
+      var preservedCount=Object.values(scoreCache).length;
+      summary+=' '+preservedCount+' resultado(s) anteriores foram mantidos onde houve coincidência de confrontos.';
+    }
+    logAudit('Import. chaveamento','via Dashboard ('+(mode==='preserve'?'preservar':'substituir')+')');
+    S.mod=null;
+    R();
+    scheduleSave();
+    setTimeout(function(){alert('✅ '+summary)},100);
+  }
+
+  // ─────────── Render by step ───────────
+  if(S.mod.step==='choose'){
+    md.appendChild(h('div',{'class':'md-h'},
+      h('h3',{},'🏟️ Importar Chaveamento'),
+      h('button',{'class':'btn btn-s',onclick:close},'✕')
+    ));
+    var body=h('div',{style:{padding:'18px 20px'}});
+    body.appendChild(h('p',{style:{fontSize:'13px',color:'var(--tx2)',marginBottom:'14px'}},
+      'Selecione o arquivo de chaveamento (.html do dashboard JIM ou planilha .xlsx). Os confrontos serão importados e substituirão os existentes.'));
+    var inp=h('input',{type:'file',accept:'.html,.xlsx,.xls',style:{display:'none'},id:'imp-brk-file'});
+    inp.onchange=function(e){handleFile(e.target.files[0])};
+    body.appendChild(inp);
+    body.appendChild(h('button',{'class':'btn btn-p',style:{width:'100%',padding:'14px'},onclick:function(){
+      document.getElementById('imp-brk-file').click();
+    }},'📂 Selecionar arquivo (.html ou .xlsx)'));
+    if(S.mod.err){
+      body.appendChild(h('div',{style:{marginTop:'12px',padding:'10px 14px',background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.3)',borderRadius:'8px',fontSize:'12px',color:'var(--rd)'}},'⚠️ '+S.mod.err));
+    }
+    md.appendChild(body);
+  } else if(S.mod.step==='preview'){
+    var p=S.mod.parsed;
+    md.appendChild(h('div',{'class':'md-h'},
+      h('h3',{},'🏟️ Pré-visualização'),
+      h('button',{'class':'btn btn-s',onclick:close},'✕')
+    ));
+    var body2=h('div',{style:{padding:'18px 20px',maxHeight:'60vh',overflowY:'auto'}});
+    var nT=(p.turmas||[]).length, nS=(p.spt||[]).length, nL=(p.locs||[]).length;
+    var nM=0;Object.values(p.brackets||{}).forEach(function(b){b.rounds.forEach(function(rd){nM+=rd.m.length})});
+    body2.appendChild(h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',marginBottom:'18px'}},
+      h('div',{style:{padding:'10px',background:'rgba(34,211,238,.08)',borderRadius:'8px',textAlign:'center'}},
+        h('div',{style:{fontSize:'18px',fontWeight:'800',color:'var(--cy)'}},''+nT),
+        h('div',{style:{fontSize:'10px',color:'var(--tx3)',textTransform:'uppercase',marginTop:'2px'}},'Turmas')
+      ),
+      h('div',{style:{padding:'10px',background:'rgba(52,211,153,.08)',borderRadius:'8px',textAlign:'center'}},
+        h('div',{style:{fontSize:'18px',fontWeight:'800',color:'var(--gn)'}},''+nS),
+        h('div',{style:{fontSize:'10px',color:'var(--tx3)',textTransform:'uppercase',marginTop:'2px'}},'Esportes')
+      ),
+      h('div',{style:{padding:'10px',background:'rgba(251,191,36,.08)',borderRadius:'8px',textAlign:'center'}},
+        h('div',{style:{fontSize:'18px',fontWeight:'800',color:'var(--am)'}},''+nL),
+        h('div',{style:{fontSize:'10px',color:'var(--tx3)',textTransform:'uppercase',marginTop:'2px'}},'Locais')
+      ),
+      h('div',{style:{padding:'10px',background:'rgba(167,139,250,.08)',borderRadius:'8px',textAlign:'center'}},
+        h('div',{style:{fontSize:'18px',fontWeight:'800',color:'var(--pu)'}},''+nM),
+        h('div',{style:{fontSize:'10px',color:'var(--tx3)',textTransform:'uppercase',marginTop:'2px'}},'Jogos')
+      )
+    ));
+
+    // Detect if there are existing scored matches
+    var existingScored=0;
+    Object.values(S.brk).forEach(function(cts){Object.values(cts).forEach(function(rds){rds.forEach(function(rd){rd.m.forEach(function(m){
+      if(m.s1!=null&&m.s2!=null)existingScored++;
+    })})})});
+
+    if(existingScored>0){
+      body2.appendChild(h('div',{style:{padding:'14px 16px',background:'rgba(251,191,36,.1)',border:'1px solid rgba(251,191,36,.3)',borderRadius:'10px',marginBottom:'14px'}},
+        h('div',{style:{fontSize:'13px',fontWeight:'700',color:'var(--am)',marginBottom:'6px'}},'⚠️ Atenção'),
+        h('div',{style:{fontSize:'12px',color:'var(--tx2)',lineHeight:'1.5'}},
+          'A escola já possui ',
+          h('b',{style:{color:'var(--am)'}},''+existingScored),
+          ' resultado(s) lançado(s). Como deseja proceder?'
+        )
+      ));
+      body2.appendChild(h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
+        h('button',{'class':'btn',style:{padding:'12px',textAlign:'left',background:'rgba(34,211,238,.08)',border:'1px solid rgba(34,211,238,.3)'},
+          onclick:function(){if(confirm('Os placares serão preservados onde os confrontos coincidirem. Continuar?'))applyImport('preserve')}},
+          h('div',{style:{fontWeight:'700',color:'var(--cy)',marginBottom:'3px'}},'🔒 Preservar Resultados'),
+          h('div',{style:{fontSize:'11px',color:'var(--tx3)'}},'Mantém placares onde os confrontos forem idênticos. Confrontos novos ficam vazios.')
+        ),
+        h('button',{'class':'btn',style:{padding:'12px',textAlign:'left',background:'rgba(239,68,68,.08)',border:'1px solid rgba(239,68,68,.3)'},
+          onclick:function(){if(confirm('TODOS os resultados serão zerados e o chaveamento substituído. Esta ação não pode ser desfeita. Continuar?'))applyImport('replace')}},
+          h('div',{style:{fontWeight:'700',color:'var(--rd)',marginBottom:'3px'}},'🗑️ Substituir Tudo'),
+          h('div',{style:{fontSize:'11px',color:'var(--tx3)'}},'Zera todos os placares e substitui o chaveamento por completo.')
+        )
+      ));
+    } else {
+      body2.appendChild(h('div',{style:{padding:'12px 14px',background:'rgba(52,211,153,.08)',border:'1px solid rgba(52,211,153,.25)',borderRadius:'10px',marginBottom:'14px',fontSize:'12px',color:'var(--tx2)'}},
+        '✅ Não há resultados lançados anteriormente. Importação direta.'));
+      body2.appendChild(h('button',{'class':'btn btn-p',style:{width:'100%',padding:'12px'},onclick:function(){applyImport('replace')}},'🚀 Importar Chaveamento'));
+    }
+    body2.appendChild(h('div',{style:{marginTop:'14px',display:'flex',gap:'8px',justifyContent:'flex-end'}},
+      h('button',{'class':'btn btn-s',onclick:function(){S.mod.step='choose';S.mod.parsed=null;mImportBrk(root)}},'← Voltar'),
+      h('button',{'class':'btn btn-s',onclick:close},'Cancelar')
+    ));
+    md.appendChild(body2);
+  }
+
+  ov.appendChild(md);
+  root.appendChild(ov);
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // AUTO-SCHEDULE MODAL
 // ══════════════════════════════════════════════════════════════════════════
