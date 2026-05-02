@@ -1632,6 +1632,15 @@ function calcRk(){
       // (Old check >3 incorrectly excluded 3-team rodizios.)
       var isRodizio=totalRnds===1&&rs[0]&&rs[0].m&&rs[0].m.length>=3;
       if(isRodizio){
+        // Only award position points when ALL matches in the rodizio are complete.
+        // Otherwise teams would receive 1st/2nd/3rd points just by appearing in the
+        // bracket, even before any game has a score.
+        var allDone=rs[0].m.every(function(m){
+          var isPH1=!m.t1||m.t1.indexOf('PH_')===0||m.t1.indexOf('W_')===0||m.t1.indexOf('L_')===0||m.t1.indexOf('GW_')===0;
+          var isPH2=!m.t2||m.t2.indexOf('PH_')===0||m.t2.indexOf('W_')===0||m.t2.indexOf('L_')===0||m.t2.indexOf('GW_')===0;
+          return (isPH1&&isPH2)||(m.s1!=null&&m.s2!=null);
+        });
+        if(!allDone)return;
         var sortedStandings=_rodizioStandings(rs[0]);
         var posKeys=['p1','p2','p3','p4','p5','p6','p7','p8'];
         sortedStandings.forEach(function(st,pi){
@@ -3096,18 +3105,26 @@ function calcClassDetail(classId){
         var totalRnds=rs.length;
         var isRodizio=totalRnds===1&&rs[0]&&rs[0].m&&rs[0].m.length>=3;
         if(isRodizio){
-          var sortedRod=_rodizioStandings(rs[0]);
-          var posLbl=['1º Lugar','2º Lugar','3º Lugar','4º Lugar','5º Lugar','6º Lugar','7º Lugar','8º Lugar'];
-          sortedRod.forEach(function(st,pi){
-            var tid=st.t;
-            // Check if this is our class
-            var te=S.enr.find(function(e){return e.id===tid});
-            var isOurClass=te?te.ci===classId:tid===classId;
-            if(isOurClass){
-              var pts=pospts(pi+1);
-              if(pts)lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+posLbl[pi]+' (rodízio)',pts:pts});
-            }
+          // Only count position points when ALL rodizio matches are complete.
+          var allDoneRod=rs[0].m.every(function(m){
+            var isPH1=!m.t1||m.t1.indexOf('PH_')===0||m.t1.indexOf('W_')===0||m.t1.indexOf('L_')===0||m.t1.indexOf('GW_')===0;
+            var isPH2=!m.t2||m.t2.indexOf('PH_')===0||m.t2.indexOf('W_')===0||m.t2.indexOf('L_')===0||m.t2.indexOf('GW_')===0;
+            return (isPH1&&isPH2)||(m.s1!=null&&m.s2!=null);
           });
+          if(allDoneRod){
+            var sortedRod=_rodizioStandings(rs[0]);
+            var posLbl=['1º Lugar','2º Lugar','3º Lugar','4º Lugar','5º Lugar','6º Lugar','7º Lugar','8º Lugar'];
+            sortedRod.forEach(function(st,pi){
+              var tid=st.t;
+              // Check if this is our class
+              var te=S.enr.find(function(e){return e.id===tid});
+              var isOurClass=te?te.ci===classId:tid===classId;
+              if(isOurClass){
+                var pts=pospts(pi+1);
+                if(pts)lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+posLbl[pi]+' (rodízio)',pts:pts});
+              }
+            });
+          }
         }
         var finalRound=rs[rs.length-1];
         if(!isRodizio&&finalRound&&finalRound.m){
