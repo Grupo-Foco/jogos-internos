@@ -1261,24 +1261,67 @@ function recomputeGroupWinners(bk,ct){
     });
   }
 
+  // Helper: try to detect implicit slot codes when _slot metadata is missing
+  // Based on bracket structure, Final's t1 = leader of Group A (or 1st of rodizio)
+  // Final's t2 = leader of Group B (or 2nd of rodizio in some configs)
+  function inferSlotCode(rd,matchIdx,slot){
+    var hasGroups=classifyRounds.length>=2;
+    if(rd.m[matchIdx].is3rd){
+      // 3rd place: t1=A2 (2nd of A), t2=B2 (2nd of B) for groups
+      // For semi structure: handled by L_<matchId> not GW_
+      if(hasGroups)return slot==='t1'?'A2':'B2';
+      // For rodizio: 3rd = position 3, 4th = position 4
+      return slot==='t1'?'3':'4';
+    } else {
+      // Main final
+      if(hasGroups)return slot==='t1'?'A':'B';
+      // Single rodizio: 1st vs 2nd
+      return slot==='t1'?'1':'2';
+    }
+  }
+
   finalRounds.forEach(function(rd){
-    rd.m.forEach(function(m){
+    rd.m.forEach(function(m,matchIdx){
       ['t1','t2'].forEach(function(slot){
         var slotKey='_slot'+(slot==='t1'?'1':'2');
         var origCode=m[slotKey];
         var s=origCode||m[slot];
-        if(!s||s.indexOf('GW_')!==0)return;
-        var match=s.match(/^GW_([A-Z0-9]+)_/);
-        if(!match)return;
-        var code=match[1];
+
+        // Determine the code (either from explicit GW_ pattern or inferred from structure)
+        var code=null;
+        if(s&&s.indexOf('GW_')===0){
+          var matchRe=s.match(/^GW_([A-Z]?[0-9A-Z]{1,2})_/);
+          if(matchRe)code=matchRe[1];
+        }
+
+        // If we don't have a code AND the slot doesn't look like a GW_ pattern,
+        // BUT origCode is missing AND we don't know if this slot needs resolution,
+        // try to infer from match structure (is the final from groups or rodizio?)
+        if(!code&&!origCode&&classifyRounds.length>0){
+          // Only infer if the FINAL slot in question hasn't been "claimed" by a real ID
+          // We infer when: m[slot] is a real turma id but the standings would compute differently
+          // Actually safer: only infer when m[slot] looks like a placeholder OR we're sure
+          var looksUnresolved=!s||s.indexOf('PH_')===0||s.indexOf('GW_')===0||s.indexOf('W_')===0||s.indexOf('L_')===0;
+          if(looksUnresolved){
+            code=inferSlotCode(rd,matchIdx,slot);
+          }
+        }
+
+        if(!code)return;
+
+        // Persist the slot code for future calls
+        if(!m[slotKey]){
+          m[slotKey]='GW_'+code+'_'+bk;
+        }
+
         // Determine which group this code refers to
         var groupIdx=0;
         if(code==='B'||code==='B2')groupIdx=1;
-        // Only resolve if the group is complete (all games scored)
-        if(!m[slotKey])m[slotKey]=s;
+
+        // Resolve only if the group is complete
         if(!isGroupComplete(groupIdx)){
-          // Reset to placeholder so user knows it's pending
-          m[slot]=origCode||s;
+          // Mark as unresolved (keep GW_ placeholder)
+          m[slot]='GW_'+code+'_'+bk;
           return;
         }
         var newId=null;
@@ -1291,7 +1334,7 @@ function recomputeGroupWinners(bk,ct){
         else if(code==='3')newId=findStandingByPos(0,3);
         else if(code==='4')newId=findStandingByPos(0,4);
         if(newId)m[slot]=newId;
-        else m[slot]=origCode||s;
+        else m[slot]='GW_'+code+'_'+bk;
       });
     });
   });
@@ -1384,8 +1427,12 @@ function calcRk(){
         function pp3(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
         var third=thirdMatch.w;
         var fourth=thirdMatch.w===thirdMatch.t1?thirdMatch.t2:thirdMatch.t1;
-        if(third&&third!=='BYE'&&third.indexOf('L_')!==0){if(!pts[third])pts[third]={w:0,p:0,wo:0};pts[third].p+=(sc.p3||0)}
-        if(fourth&&fourth!=='BYE'&&fourth.indexOf('L_')!==0){if(!pts[fourth])pts[fourth]={w:0,p:0,wo:0};pts[fourth].p+=(sc.p4||0)}
+        if(third&&third!=='BYE'&&third.indexOf('W_')!==0&&third.indexOf('L_')!==0&&third.indexOf('GW_')!==0&&third.indexOf('PH_')!==0){
+          if(!pts[third])pts[third]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[third].p+=pp3(3);
+        }
+        if(fourth&&fourth!=='BYE'&&fourth.indexOf('W_')!==0&&fourth.indexOf('L_')!==0&&fourth.indexOf('GW_')!==0&&fourth.indexOf('PH_')!==0){
+          if(!pts[fourth])pts[fourth]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[fourth].p+=pp3(4);
+        }
       }
     });
   });
@@ -2279,6 +2326,85 @@ function pB(c){
           thirdFinals.forEach(function(m){finalWrap.appendChild(renderFinalMatch(m,'🥉 3º Lugar','#f59e0b'))});
           main.appendChild(finalWrap);
         });
+
+        // ── STANDINGS TABLE ─────────────────────────────────────────────
+        function buildStandingsTable(rd,label){
+          var stats={};
+          rd.m.forEach(function(mm){
+            [mm.t1,mm.t2].forEach(function(t){
+              if(t&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0){
+                if(!stats[t])stats[t]={t:t,w:0,d:0,l:0,pts:0,gd:0,gp:0,ga:0};
+              }
+            });
+            if(mm.s1==null||mm.s2==null)return;
+            var t1=mm.t1,t2=mm.t2;
+            if(!stats[t1]||!stats[t2])return;
+            stats[t1].gp+=mm.s1;stats[t2].gp+=mm.s2;
+            stats[t1].ga+=mm.s2;stats[t2].ga+=mm.s1;
+            stats[t1].gd+=(mm.s1-mm.s2);stats[t2].gd+=(mm.s2-mm.s1);
+            if(mm.isDraw||mm.s1===mm.s2){stats[t1].d++;stats[t2].d++;stats[t1].pts++;stats[t2].pts++;}
+            else if(mm.w===t1){stats[t1].w++;stats[t1].pts+=3;stats[t2].l++;}
+            else if(mm.w===t2){stats[t2].w++;stats[t2].pts+=3;stats[t1].l++;}
+          });
+          var tiebreakers=(S.tiebreakers||['gd','headtohead','gp']);
+          var sorted=Object.values(stats).sort(function(a,b){
+            if(b.pts!==a.pts)return b.pts-a.pts;
+            for(var i=0;i<tiebreakers.length;i++){
+              var tb=tiebreakers[i];
+              if(tb==='gd'&&b.gd!==a.gd)return b.gd-a.gd;
+              if(tb==='gp'&&b.gp!==a.gp)return b.gp-a.gp;
+              if(tb==='headtohead'){
+                var hth=null;
+                rd.m.forEach(function(mm){if((mm.t1===a.t&&mm.t2===b.t)||(mm.t1===b.t&&mm.t2===a.t)){if(mm.s1!=null&&mm.s2!=null)hth=mm}});
+                if(hth&&hth.w){if(hth.w===a.t)return -1;if(hth.w===b.t)return 1;}
+              }
+            }
+            return 0;
+          });
+          if(!sorted.length)return null;
+          var tbl=h('div',{'class':'card',style:{marginTop:'14px'}});
+          tbl.appendChild(h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📊 Classificação'+(label?' — '+label:''))));
+          var ECOLS={'ROXO':'#8b5cf6','VERDE':'#22c55e','VERMELHO':'#ef4444','AMARELO':'#eab308','AZUL':'#3b82f6','ROSA':'#ec4899','PRETO':'#374151','CINZA':'#6b7280','LARANJA':'#f97316'};
+          function ec(nm){var col='var(--tx3)';var u=(nm||'').toUpperCase();Object.entries(ECOLS).forEach(function(e){if(u.indexOf(e[0])>=0)col=e[1]});return col;}
+          var hdr=h('div',{style:{display:'grid',gridTemplateColumns:'30px 1fr 50px 50px 50px 50px 60px 60px',gap:'4px',padding:'6px 12px',fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',borderBottom:'1px solid var(--br)'}},
+            h('span',{},'#'),h('span',{},'Equipe'),
+            h('span',{style:{textAlign:'center'}},'V'),
+            h('span',{style:{textAlign:'center'}},'E'),
+            h('span',{style:{textAlign:'center'}},'D'),
+            h('span',{style:{textAlign:'center'}},'GP'),
+            h('span',{style:{textAlign:'center'}},'SG'),
+            h('span',{style:{textAlign:'right',color:'var(--cy)'}},'PTS'));
+          tbl.appendChild(hdr);
+          sorted.forEach(function(s,i){
+            var nm=tName(s.t);
+            var posColor=i===0?'var(--am)':i===1?'#94a3b8':i===2?'#fb923c':'var(--tx3)';
+            var row=h('div',{style:{display:'grid',gridTemplateColumns:'30px 1fr 50px 50px 50px 50px 60px 60px',gap:'4px',padding:'8px 12px',borderBottom:'1px solid var(--br)',background:i===0?'rgba(251,191,36,.06)':''}},
+              h('span',{style:{fontWeight:'700',color:posColor}},(i+1)+'º'),
+              h('span',{style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px'}},
+                h('span',{style:{width:'8px',height:'8px',borderRadius:'50%',background:ec(nm),flexShrink:'0'}}),
+                h('span',{},nm)
+              ),
+              h('span',{style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px'}},''+s.w),
+              h('span',{style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px',color:'var(--tx3)'}},''+s.d),
+              h('span',{style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px',color:'var(--tx3)'}},''+s.l),
+              h('span',{style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px'}},''+s.gp),
+              h('span',{style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px',color:s.gd>0?'var(--gn)':s.gd<0?'var(--rd)':'var(--tx3)'}},(s.gd>0?'+':'')+s.gd),
+              h('span',{style:{textAlign:'right',fontFamily:"'Space Mono'",fontSize:'14px',fontWeight:'800',color:'var(--cy)'}},''+s.pts)
+            );
+            tbl.appendChild(row);
+          });
+          return tbl;
+        }
+
+        if(classifyRounds.length===1){
+          var sTbl=buildStandingsTable(classifyRounds[0],'');
+          if(sTbl)main.appendChild(sTbl);
+        } else if(classifyRounds.length>1){
+          classifyRounds.forEach(function(rd){
+            var sTbl=buildStandingsTable(rd,rd.label||'');
+            if(sTbl)main.appendChild(sTbl);
+          });
+        }
       } else if(finalRounds.length&&!showFinals){
         // Notice: final will be generated after classify
         main.appendChild(h('div',{style:{marginTop:'14px',padding:'14px 16px',background:'rgba(251,191,36,.08)',border:'1px dashed rgba(251,191,36,.3)',borderRadius:'10px',textAlign:'center',fontSize:'12px',color:'var(--am)'}},
@@ -2586,16 +2712,42 @@ function calcClassDetail(classId){
         lines.push({desc:'🔴 <b>'+spName+' '+ct+'</b> — '+wos+' W.O.',pts:wos*(sc.pWO||0)});
         totalWO+=wos;
       }
-      // Position points (1st/2nd/3rd/4th from finals)
+      // Position points (1st/2nd/3rd/4th from finals OR rodizio standings)
       if(rs.length){
+        // RODIZIO mode: pure 1-round bracket with >3 matches
+        var totalRnds=rs.length;
+        var isRodizio=totalRnds===1&&rs[0]&&rs[0].m&&rs[0].m.length>3;
+        if(isRodizio){
+          // Compute standings for this rodizio
+          var rodPts={};
+          rs[0].m.forEach(function(mm){
+            if(mm.s1==null||mm.s2==null)return;
+            if(mm.isDraw||mm.s1===mm.s2){
+              [mm.t1,mm.t2].forEach(function(t){if(t&&t.indexOf('PH_')!==0){if(!rodPts[t])rodPts[t]=0;rodPts[t]+=0.5}});
+            } else if(mm.w){
+              if(!rodPts[mm.w])rodPts[mm.w]=0;rodPts[mm.w]++;
+            }
+          });
+          var sortedRod=Object.entries(rodPts).sort(function(a,b){return b[1]-a[1]});
+          var posLbl=['1º Lugar','2º Lugar','3º Lugar','4º Lugar','5º Lugar','6º Lugar','7º Lugar','8º Lugar'];
+          sortedRod.forEach(function(entry,pi){
+            var tid=entry[0];
+            // Check if this is our class
+            var te=S.enr.find(function(e){return e.id===tid});
+            var isOurClass=te?te.ci===classId:tid===classId;
+            if(isOurClass){
+              var pts=pospts(pi+1);
+              if(pts)lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+posLbl[pi]+' (rodízio)',pts:pts});
+            }
+          });
+        }
         var finalRound=rs[rs.length-1];
-        if(finalRound&&finalRound.m){
+        if(!isRodizio&&finalRound&&finalRound.m){
           var finalM=finalRound.m.find(function(m){return!m.is3rd});
           var thirdM=finalRound.m.find(function(m){return m.is3rd});
           if(finalM&&finalM.w){
             var checkPos=function(teamId,pos,label){
-              if(!teamId||teamId==='BYE'||teamId.indexOf('W_')===0||teamId.indexOf('L_')===0||teamId.indexOf('PH_')===0)return;
-              // Try enr id, then direct turma id (imported brackets)
+              if(!teamId||teamId==='BYE'||teamId.indexOf('W_')===0||teamId.indexOf('L_')===0||teamId.indexOf('PH_')===0||teamId.indexOf('GW_')===0)return;
               var te=S.enr.find(function(e){return e.id===teamId});
               var isOurClass=te?te.ci===classId:teamId===classId;
               if(isOurClass){
