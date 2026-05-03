@@ -1345,31 +1345,20 @@ function jimBracketDataToSchoolState(parsed,adminPass,year){
   var normYear=(year||'').replace(/[\u00b0\u00ba]/g,'\u00ba').replace(/\s+/g,' ').trim().toUpperCase();
   var cls=parsed.turmas.map(function(t){return{id:t.id,nm:t.nm,yr:normYear,clr:''}}).sort(function(a,b){return a.nm.localeCompare(b.nm,'pt')});
   var spt=parsed.spt.map(function(sp){var cat=sp.gender&&sp.gender!=='Misto'?sp.gender:'Masculino';return{id:sp.id,nm:sp.base,gender:sp.gender,ct:[cat],mn:5,mx:15,dur:14,pts:{w:3,d:1,l:0,wo:0},tiebreaker:['gd','yc','rc','w'],tiebreakers:['goalDiff','yellowCards','redCards'],scoring:{}}});
-  // turma id -> turma name lookup
-  var tidToNm={};parsed.turmas.forEach(function(t){tidToNm[t.id]=t.nm});
-  // Build enrollments: one per (turma, sport, gender) pair that appears in a bracket match
-  var es={};
-  Object.values(parsed.brackets).forEach(function(b){
-    var spId=b.sp.id,g=b.gender;
-    b.rounds.forEach(function(rd){rd.m.forEach(function(m){
-      [m.t1,m.t2].forEach(function(tid){
-        // Skip ALL placeholder/structural slots — only real turma ids become enrollments.
-        if(tid&&tid!=='BYE'&&tid.indexOf('PH_')!==0&&tid.indexOf('GW_')!==0&&tid.indexOf('W_')!==0&&tid.indexOf('L_')!==0){
-          var k=tid+'|'+spId+'|'+g;
-          if(!es[k])es[k]={id:u(),ci:tid,si:spId,ct:g,st:'approved',tn:tidToNm[tid]||''};
-        }
-      });
-    })});
-  });
-  // Normalize year to uppercase for bracket key (must match S.bay = nrmYr(yr))
-  var normYear=(year||'').replace(/[\u00b0\u00ba]/g,'\u00ba').replace(/\s+/g,' ').trim().toUpperCase();
+  // ARCHITECTURE NOTE: bracket import does NOT create enrollments anymore.
+  // Brackets use turma ids directly in m.t1/m.t2 (tName() falls back to S.cls
+  // when no enrollment is found). Enrollments are created exclusively by
+  // ficha imports (XLSX/DOCX) — they represent the list of athletes per
+  // (turma, sport, category) trio. This separation keeps responsibilities clean:
+  //   - Bracket = competition structure (who plays whom, when, where)
+  //   - Enrollment = roster (who are the athletes in each team)
   var brk={};
   Object.values(parsed.brackets).forEach(function(b){
     var bk=normYear+'__'+b.sp.id+'__'+(b.serie||'GERAL');
     if(!brk[bk])brk[bk]={};
     brk[bk][b.gender]=b.rounds;
   });
-  return{cls:cls,spt:spt,enr:Object.values(es),brk:brk,locs:parsed.locs,ev:{name:'Jogos Internos 2026'},logins:[],judgeLogins:[],recursos:[],adminPass:adminPass||'admin123',thirdPlace:{},appInfo:{author:'',contact:'',version:'3.0'}};
+  return{cls:cls,spt:spt,enr:[],brk:brk,locs:parsed.locs,ev:{name:'Jogos Internos 2026'},logins:[],judgeLogins:[],recursos:[],adminPass:adminPass||'admin123',thirdPlace:{},appInfo:{author:'',contact:'',version:'3.0'}};
 }
 
 
@@ -1849,6 +1838,14 @@ function dedupeTurmas(){
 
 function dedupeEnrollments(){
   if(!S.enr||!S.enr.length)return 0;
+  // First: drop enrollments whose ci doesn't exist in S.cls anymore
+  // (orphans left by old imports or bracket re-imports)
+  var validCi={};
+  S.cls.forEach(function(c){validCi[c.id]=true});
+  var beforeCount=S.enr.length;
+  S.enr=S.enr.filter(function(e){return validCi[e.ci]});
+  var orphansRemoved=beforeCount-S.enr.length;
+  if(!S.enr.length)return orphansRemoved;
   var byKey={};
   S.enr.forEach(function(e){
     var key=(e.ci||'')+'|'+(e.si||'')+'|'+(e.ct||'');
@@ -1900,7 +1897,7 @@ function dedupeEnrollments(){
     keeper.pl=allPlayers.join(', ');
   });
   S.enr=S.enr.filter(function(e){return keepIds[e.id]});
-  return removed;
+  return removed+orphansRemoved;
 }
 function getEnrByAno(ano,ap){var cids=getClsByAno(ano).map(function(c){return c.id});return ap.filter(function(e){return cids.indexOf(e.ci)>=0})}
 
@@ -1930,6 +1927,20 @@ function genBracket(ids,has3rd){
 }
 
 function rName(r,t){var d=t-r;return d===0?'Final':d===1?'Semi':d===2?'Quartas':'Rodada '+r}
+
+// Resolve a match team identifier to a turma (class) id.
+// Brackets imported from Word/HTML/XLSX use turma ids directly in m.t1/m.t2,
+// while manually-generated brackets use enrollment ids. This helper handles both.
+function resolveCi(id){
+  if(!id||id==='BYE'||id.indexOf('PH_')===0||id.indexOf('GW_')===0||id.indexOf('W_')===0||id.indexOf('L_')===0)return null;
+  // Try enrollment first
+  var e=S.enr.find(function(x){return x.id===id});
+  if(e)return e.ci;
+  // Try turma id directly
+  var cl=S.cls.find(function(x){return x.id===id});
+  if(cl)return cl.id;
+  return null;
+}
 
 function tName(id){
   if(!id||id==='BYE')return'BYE';
@@ -2981,7 +2992,43 @@ function pB(c){
   if(!S.bserie||seriesForFilter.indexOf(S.bserie)<0)S.bserie=seriesForFilter[0]||'GERAL';
 
   var bkey=S.bay+'__'+currentSpId+'__'+S.bserie;
-  var tms=apYear.filter(function(e){return e.si===currentSpId&&e.ct===S.bc});
+
+  // Determine participating turmas: priority is bracket matches (bracket = source
+  // of truth for "who plays in this category"). Fall back to enrollments only
+  // when no bracket exists yet (free-form mode without imported chaveamento).
+  // Each "tm" object mimics an enrollment shape so downstream code keeps working:
+  //   {id, tn, ci, si, ct, pl, st}
+  // For turmas without imported ficha, pl is empty (no athletes yet).
+  var bkRds=S.brk[bkey]&&S.brk[bkey][S.bc]?S.brk[bkey][S.bc]:[];
+  var tms=[];
+  if(bkRds.length){
+    // Walk all matches, collect real turma ids
+    var seenTids={};
+    function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('GW_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0}
+    bkRds.forEach(function(rd){rd.m.forEach(function(m){
+      [m.t1,m.t2,m._slot1,m._slot2].forEach(function(t){
+        if(isReal(t))seenTids[t]=true;
+      });
+    })});
+    Object.keys(seenTids).forEach(function(tid){
+      var cl=S.cls.find(function(c){return c.id===tid});
+      if(!cl)return; // not a real class — probably stale id
+      // Find ficha-imported enrollment for this (turma, sport, gender) if exists
+      var enr=S.enr.find(function(e){return e.ci===tid&&e.si===currentSpId&&e.ct===S.bc});
+      tms.push({
+        id:enr?enr.id:tid,
+        tn:enr?enr.tn:cl.nm,
+        ci:tid,
+        si:currentSpId,
+        ct:S.bc,
+        pl:enr?(enr.pl||''):'',
+        st:'approved'
+      });
+    });
+  } else {
+    // No bracket — fall back to enrollment-driven mode (manual seeding workflow)
+    tms=apYear.filter(function(e){return e.si===currentSpId&&e.ct===S.bc});
+  }
   var has3rd=!!(S.thirdPlace[bkey]&&S.thirdPlace[bkey][S.bc]);
   var sp2=S.spt.find(function(s){return s.id===currentSpId});
 
@@ -5442,10 +5489,11 @@ function calcBracketClassification(rds,bkey,category){
 
 function checkConflict(match,startDt,endDt,skipBkey,skipCt){
   // Get class IDs and categories for t1 and t2
-  var e1=S.enr.find(function(e){return e.id===match.t1});
-  var e2=S.enr.find(function(e){return e.id===match.t2});
-  var ci1=e1&&e1.ci, ci2=e2&&e2.ci;
-  var cat1=e1&&e1.ct, cat2=e2&&e2.ct; // Masculino/Feminino/Misto
+  var ci1=resolveCi(match.t1);
+  var ci2=resolveCi(match.t2);
+  // Category of the current match — derive from the bracket key (skipBkey/skipCt)
+  // since match objects don't always carry it.
+  var cat1=skipCt, cat2=skipCt;
   if(!ci1&&!ci2)return false;
   var conflict=false;
   Object.entries(S.brk).forEach(function(bkEntry){
@@ -5462,13 +5510,10 @@ function checkConflict(match,startDt,endDt,skipBkey,skipCt){
         var d2=(sp2&&sp2.dur)||14;
         var me=new Date(ms.getTime()+d2*60000);
         if(ms<endDt&&me>startDt){
-          var em1=S.enr.find(function(e){return e.id===m.t1});
-          var em2=S.enr.find(function(e){return e.id===m.t2});
-          var cm1=em1&&em1.ci, cm2=em2&&em2.ci;
+          var cm1=resolveCi(m.t1), cm2=resolveCi(m.t2);
           var ccat=ctEntry[0]; // category of the other match
           // Conflict: same turma AND same category (masc vs masc = conflict, masc vs fem = ok)
           if(ci1&&(ci1===cm1||ci1===cm2)){
-            // Check if categories overlap (same gender = students overlap)
             if(cat1===ccat||cat1==='Misto'||ccat==='Misto')conflict=true;
           }
           if(ci2&&(ci2===cm1||ci2===cm2)){
@@ -5571,9 +5616,8 @@ function notifyNextGame(bkeyResult,ct,completedMatchId){
       var ct2=ctE[0],rds=ctE[1];
       rds.forEach(function(r){r.m.forEach(function(m){
         if(m.w||m.t1==='BYE'||m.t2==='BYE'||!m.dt)return;
-        var e1=S.enr.find(function(e){return e.id===m.t1});
-        var e2=S.enr.find(function(e){return e.id===m.t2});
-        if((e1&&e1.ci===ci)||(e2&&e2.ci===ci)){
+        var c1=resolveCi(m.t1), c2=resolveCi(m.t2);
+        if(c1===ci||c2===ci){
           upcoming.push({m:m,si:si,ct:ct2,dt:new Date(m.dt)});
         }
       })});
@@ -5605,15 +5649,14 @@ function getStudentAlert(){
       var ct2=ctE[0],rds=ctE[1];
       rds.forEach(function(r){r.m.forEach(function(m){
         if(m.w||!m.dt)return;
-        var e1=S.enr.find(function(e){return e.id===m.t1});
-        var e2=S.enr.find(function(e){return e.id===m.t2});
-        if(!((e1&&e1.ci===ci)||(e2&&e2.ci===ci)))return;
+        var c1=resolveCi(m.t1), c2=resolveCi(m.t2);
+        if(c1!==ci&&c2!==ci)return;
         var dt=new Date(m.dt);
         var diff=(dt-now)/60000; // minutes until match
         if(diff>=0&&diff<=60){ // alert if within 60 min
           var sp=S.spt.find(function(s){return s.id===si});
           var dtStr=dt.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-          var opp=(e1&&e1.ci===ci)?tName(m.t2):tName(m.t1);
+          var opp=(c1===ci)?tName(m.t2):tName(m.t1);
           alert={msg:'Seu próximo jogo é contra '+opp,detail:(sp?sp.nm:'')+' · '+ct2+' · '+dtStr+(m.lc?' @ '+m.lc:''),diff:Math.round(diff)};
         }
       })});
@@ -7100,15 +7143,14 @@ function getAllConflicts(){
       var ct=ctE[0],rds=ctE[1];
       rds.forEach(function(rd){rd.m.forEach(function(m){
         if(!m.dt||m.t1==='BYE'||m.t2==='BYE')return;
-        var e1=S.enr.find(function(e){return e.id===m.t1});
-        var e2=S.enr.find(function(e){return e.id===m.t2});
+        var c1=resolveCi(m.t1), c2=resolveCi(m.t2);
         var start=new Date(m.dt);
         var end=new Date(start.getTime()+dur*60000);
         scheduled.push({
           id:m.id,bk:bk,ct:ct,ano:ano,siId:siId,spNm:sp?sp.nm:'?',
-          t1:m.t1,t2:m.t2,ci1:e1&&e1.ci,ci2:e2&&e2.ci,
+          t1:m.t1,t2:m.t2,ci1:c1,ci2:c2,
           start:start,end:end,dur:dur,dt:m.dt,lc:m.lc,
-          tn1:e1?e1.tn:'?',tn2:e2?e2.tn:'?',
+          tn1:tName(m.t1),tn2:tName(m.t2),
           rnd:m.r,tR:rds.length,is3rd:m.is3rd
         });
       })});
