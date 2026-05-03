@@ -3153,6 +3153,16 @@ function pB(c){
           var mainFinals=rd.m.filter(function(m){return!m.is3rd});
           var thirdFinals=rd.m.filter(function(m){return m.is3rd});
 
+          // Detect round label for the colored band on each card.
+          // The parser sets rd.label = 'Semifinal' / 'Final' / 'Quartas' etc.
+          // For backwards compat, default to '🏆 Final' if label is missing/unknown.
+          var rdLbl=(rd.label||'').toUpperCase();
+          var roundLabel,roundColor;
+          if(rdLbl.indexOf('SEMI')>=0){roundLabel='⚔️ Semifinal';roundColor='#a78bfa'}
+          else if(rdLbl.indexOf('QUARTA')>=0){roundLabel='🥊 Quartas';roundColor='#34d399'}
+          else if(rdLbl.indexOf('OITAVA')>=0){roundLabel='🥊 Oitavas';roundColor='#22d3ee'}
+          else {roundLabel='🏆 Final';roundColor='#22d3ee'}
+
           function renderFinalMatch(m,label,color){
             var n1=tName(m.t1),n2=tName(m.t2);
             var ECOLS2={'ROXO':'#8b5cf6','VERDE':'#22c55e','VERMELHO':'#ef4444','AMARELO':'#eab308','AZUL':'#3b82f6','ROSA':'#ec4899','PRETO':'#374151','CINZA':'#6b7280','LARANJA':'#f97316'};
@@ -3183,7 +3193,7 @@ function pB(c){
             return card;
           }
 
-          mainFinals.forEach(function(m){finalWrap.appendChild(renderFinalMatch(m,'🏆 Final','#22d3ee'))});
+          mainFinals.forEach(function(m){finalWrap.appendChild(renderFinalMatch(m,roundLabel,roundColor))});
           thirdFinals.forEach(function(m){finalWrap.appendChild(renderFinalMatch(m,'🥉 3º Lugar','#f59e0b'))});
           main.appendChild(finalWrap);
         });
