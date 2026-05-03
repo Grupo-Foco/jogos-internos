@@ -425,10 +425,25 @@ var XLSXMini = {
     while ((rowM = rowRe.exec(xml)) !== null) {
       var rIdx = +rowM[1]; if (rIdx > maxR) maxR = rIdx;
       var cells = {}, maxC = 0;
-      var cellRe = /<c\b([^>]*)>([\s\S]*?)<\/c>/g, cellM;
+      // Match either:
+      //   <c attrs/>          (self-closing, empty cell)
+      //   <c attrs>content</c> (normal cell with value)
+      // The previous regex was greedy across self-closing cells and stole
+      // content from the next cell — that's why D28 was lost (its content
+      // got attached to C28 which was self-closing).
+      var cellRe = /<c\b([^>]*?)\/>|<c\b([^>]*)>([\s\S]*?)<\/c>/g, cellM;
       while ((cellM = cellRe.exec(rowM[2])) !== null) {
-        var attrs = cellM[1], content = cellM[2];
+        var isSelfClose = cellM[1] != null;
+        var attrs = isSelfClose ? cellM[1] : cellM[2];
+        var content = isSelfClose ? '' : cellM[3];
         var ref = (attrs.match(/\br="([A-Z]+\d+)"/) || [])[1]; if (!ref) continue;
+        var col = ref.replace(/\d+/g, ''), colIdx = 0;
+        for (var ci = 0; ci < col.length; ci++) colIdx = colIdx * 26 + col.charCodeAt(ci) - 64;
+        if (colIdx > maxC) maxC = colIdx;
+        if (isSelfClose) {
+          // Empty cell — record nothing (column slot will fill with '' later)
+          continue;
+        }
         var type = (attrs.match(/\bt="([^"]*)"/) || [])[1] || '';
         var vM = /<v>([^<]*)<\/v>/.exec(content);
         var val = vM ? vM[1] : '';
@@ -436,20 +451,58 @@ var XLSXMini = {
         else if (type === 'inlineStr') { var isM = /<t[^>]*>([^<]*)<\/t>/.exec(content); val = isM ? this._xmlText(isM[1]) : ''; }
         else if (type === 'str') { val = this._xmlText(val); }
         else if (val !== '' && !isNaN(+val)) { val = +val; }
-        var col = ref.replace(/\d+/g, ''), colIdx = 0;
-        for (var ci = 0; ci < col.length; ci++) colIdx = colIdx * 26 + col.charCodeAt(ci) - 64;
-        if (colIdx > maxC) maxC = colIdx;
         cells[colIdx] = val;
       }
       rows[rIdx] = {cells: cells, maxC: maxC};
     }
+    // Process merged cells: copy the top-left cell value to all merged cells.
+    // Excel only stores the value once in the top-left, but the parser needs
+    // it to appear in all merged positions for downstream column-based logic.
+    // We mark the duplicated cells with `_merged: true` so the consumer can
+    // distinguish authoritative cells from filled-in copies.
+    var mergedSet = {}; // "row|col" → true (means this cell is a merge slave)
+    var mergeRe = /<mergeCell\s+ref="([A-Z]+\d+):([A-Z]+\d+)"/g, mergeM;
+    function refToColRow(r) {
+      var m = r.match(/^([A-Z]+)(\d+)$/);
+      if (!m) return null;
+      var c = 0;
+      for (var i = 0; i < m[1].length; i++) c = c * 26 + m[1].charCodeAt(i) - 64;
+      return {col: c, row: +m[2]};
+    }
+    while ((mergeM = mergeRe.exec(xml)) !== null) {
+      var a = refToColRow(mergeM[1]), b = refToColRow(mergeM[2]);
+      if (!a || !b) continue;
+      var srcRow = rows[a.row];
+      if (!srcRow || srcRow.cells[a.col] == null) continue;
+      var srcVal = srcRow.cells[a.col];
+      for (var rr = a.row; rr <= b.row; rr++) {
+        if (!rows[rr]) rows[rr] = {cells: {}, maxC: 0};
+        for (var cc = a.col; cc <= b.col; cc++) {
+          if (rr === a.row && cc === a.col) continue; // skip authoritative origin
+          if (rows[rr].cells[cc] == null) {
+            rows[rr].cells[cc] = srcVal;
+            mergedSet[rr+'|'+cc] = true;
+          }
+          if (cc > rows[rr].maxC) rows[rr].maxC = cc;
+        }
+        if (rr > maxR) maxR = rr;
+      }
+    }
+    // Expose merged-cell map for consumers (parseFichaXlsxRows uses it
+    // to skip slave cells when scanning column-by-column).
     var arr = [];
+    var mergedRows = []; // parallel array of "merged cell" booleans
     for (var ri = 1; ri <= maxR; ri++) {
       if (!rows[ri]) continue;
-      var row = [];
-      for (var ci = 1; ci <= rows[ri].maxC; ci++) row.push(rows[ri].cells[ci] != null ? rows[ri].cells[ci] : '');
+      var row = [], rowMerged = [];
+      for (var ci2 = 1; ci2 <= rows[ri].maxC; ci2++) {
+        row.push(rows[ri].cells[ci2] != null ? rows[ri].cells[ci2] : '');
+        rowMerged.push(!!mergedSet[ri+'|'+ci2]);
+      }
       arr.push(row);
+      mergedRows.push(rowMerged);
     }
+    arr._merged = mergedRows;
     return arr;
   }
 };
@@ -1733,6 +1786,67 @@ function autoFixTeamNames(){
 // Deduplicate enrollments: when multiple enrollments exist for the same
 // (turma, sport, category) trio, keep the one with the longest player list
 // and merge any unique players from the others. Returns count of removed duplicates.
+// Deduplicate turmas: when multiple classes resolve to the same kex() key
+// (e.g. "6º A", "6º Ano A", "6º ANO A" → all key "6A"), keep one and migrate
+// all references (enrollments + brackets + podiums + recursos) to it.
+// Returns count of removed duplicate turmas.
+function dedupeTurmas(){
+  if(!S.cls||S.cls.length<2)return 0;
+  // Group by kex key — but only when the key is "useful" (>= 2 chars,
+  // and starts with a digit so we don't merge generic single-word names)
+  var groups={};
+  S.cls.forEach(function(c){
+    var k=kex(c.nm);
+    if(!k||k.length<2||!/^\d/.test(k))k='__solo_'+c.id;
+    if(!groups[k])groups[k]=[];
+    groups[k].push(c);
+  });
+  var removedCount=0;
+  Object.values(groups).forEach(function(g){
+    if(g.length<2)return;
+    // Keep the "best" turma: one with most enrollments, then longest name, then a real yr
+    g.sort(function(a,b){
+      var ea=S.enr.filter(function(e){return e.ci===a.id}).length;
+      var eb=S.enr.filter(function(e){return e.ci===b.id}).length;
+      if(ea!==eb)return eb-ea;
+      var lenDiff=(b.nm||'').length-(a.nm||'').length;
+      if(lenDiff!==0)return lenDiff;
+      return 0;
+    });
+    var keeper=g[0];
+    // Prefer the more specific/explanatory name when lengths differ enough
+    // (e.g. "6º Ano A" over "6A"). The sort above already favors longer names.
+    for(var i=1;i<g.length;i++){
+      var dup=g[i];
+      // Migrate all references
+      S.enr.forEach(function(e){if(e.ci===dup.id)e.ci=keeper.id});
+      Object.keys(S.brk).forEach(function(bk){
+        Object.keys(S.brk[bk]).forEach(function(ct){
+          S.brk[bk][ct]=S.brk[bk][ct].map(function(rd){
+            return Object.assign({},rd,{m:rd.m.map(function(m){
+              var nm=Object.assign({},m);
+              if(nm.t1===dup.id)nm.t1=keeper.id;
+              if(nm.t2===dup.id)nm.t2=keeper.id;
+              if(nm.w===dup.id)nm.w=keeper.id;
+              if(nm.wo===dup.id)nm.wo=keeper.id;
+              return nm;
+            })});
+          });
+        });
+      });
+      (S.podiums||[]).forEach(function(p){
+        for(var j=1;j<=8;j++){if(p['p'+j]===dup.id)p['p'+j]=keeper.id}
+      });
+      (S.recursos||[]).forEach(function(r){if(r.punishClassId===dup.id)r.punishClassId=keeper.id});
+      removedCount++;
+    }
+    S.cls=S.cls.filter(function(c){return c.id===keeper.id||g.indexOf(c)<0});
+  });
+  // Also normalize yr — if multiple yr exist for "same" turma context,
+  // keep the one with most usage (already done by ordering above).
+  return removedCount;
+}
+
 function dedupeEnrollments(){
   if(!S.enr||!S.enr.length)return 0;
   var byKey={};
@@ -4144,17 +4258,24 @@ function pI(c){
     )
   ));
 
-  // ── DOCX Ficha de Inscrição Import ──────────────────────────────────
+  // ── DOCX/XLSX Ficha de Inscrição Import ─────────────────────────────
   var dz2=h('div',{'class':'dz'});
   dz2.appendChild(h('div',{style:{fontSize:'36px',marginBottom:'8px',opacity:'.6'}},'📄'));
-  dz2.appendChild(h('div',{style:{fontSize:'14px',fontWeight:'600'}},'Importar Ficha de Inscrição (.docx)'));
-  dz2.appendChild(h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'3px'}},'Arquivo com tabela de esportes e jogadores'));
-  var inp2=h('input',{type:'file',accept:'.docx'});
-  inp2.onchange=function(e){if(e.target.files[0])impDocx(e.target.files[0])};
+  dz2.appendChild(h('div',{style:{fontSize:'14px',fontWeight:'600'}},'Importar Ficha de Inscrição (.docx ou .xlsx)'));
+  dz2.appendChild(h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'3px'}},'Word ou Excel com esportes e jogadores'));
+  var inp2=h('input',{type:'file',accept:'.docx,.xlsx,.xls'});
+  function _routeFicha(file){
+    if(!file)return;
+    var ext=(file.name||'').split('.').pop().toLowerCase();
+    if(ext==='docx')return impDocx(file);
+    if(ext==='xlsx'||ext==='xls')return impFichaXlsx(file);
+    alert('Use arquivo .docx ou .xlsx');
+  }
+  inp2.onchange=function(e){_routeFicha(e.target.files[0])};
   dz2.appendChild(inp2);
   dz2.ondragover=function(e){e.preventDefault();dz2.classList.add('drag')};
   dz2.ondragleave=function(){dz2.classList.remove('drag')};
-  dz2.ondrop=function(e){e.preventDefault();dz2.classList.remove('drag');if(e.dataTransfer.files[0])impDocx(e.dataTransfer.files[0])};
+  dz2.ondrop=function(e){e.preventDefault();dz2.classList.remove('drag');_routeFicha(e.dataTransfer.files[0])};
 
   var docxRes=h('div',{});
   if(S._docxResult){
@@ -4164,9 +4285,9 @@ function pI(c){
   }
 
   c.appendChild(h('div',{'class':'card',style:{marginTop:'16px'}},
-    h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📄 Importar Ficha de Inscrição (DOCX)')),
+    h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📄 Importar Ficha de Inscrição (DOCX/XLSX)')),
     h('div',{'class':'card-b'},
-      h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.7'},html:'Importe as fichas de inscrição das turmas no formato <b>.docx</b>.<br>O sistema detecta automaticamente os <b style="color:var(--gn)">esportes</b>, <b style="color:var(--pu)">categorias</b> e <b style="color:var(--pr)">jogadores</b> da tabela.<br><span style="color:var(--am)">O nome da turma será solicitado na importação.</span>'}),
+      h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.7'},html:'Importe as fichas de inscrição das turmas no formato <b>.docx</b> (Word) ou <b>.xlsx</b> (Excel).<br>O sistema detecta automaticamente os <b style="color:var(--gn)">esportes</b>, <b style="color:var(--pu)">categorias</b> e <b style="color:var(--pr)">jogadores</b>.<br><span style="color:var(--am)">O nome da turma será solicitado na importação.</span>'}),
       dz2,docxRes
     )
   ));
@@ -4177,6 +4298,187 @@ function pI(c){
 // ══════════════════════════════════════════════════════════════════════════
 // DOCX FICHA DE INSCRIÇÃO IMPORT
 // ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+// XLSX FICHA DE INSCRIÇÃO IMPORT (same layout as DOCX, but rows in Excel cells)
+// ══════════════════════════════════════════════════════════════════════════
+function impFichaXlsx(file){
+  if(!XLSXMini){alert('Erro: parser XLSX não carregado.');return}
+  var reader=new FileReader();
+  reader.onload=function(ev){
+    XLSXMini.read(ev.target.result).then(function(wb){
+      if(!wb){alert('Não foi possível ler o XLSX.');return}
+      // Pick first sheet (usually 'FICHA')
+      var sN=Object.keys(wb);
+      if(!sN.length){alert('Planilha sem abas.');return}
+      var rows=wb[sN[0]];
+      if(!rows||!rows.length){alert('Planilha vazia.');return}
+      // Try to autodetect turma name from first non-empty cells of header row
+      // Common pattern: cell A1 = abbreviation (e.g. "AMA"), B1 = "5º ano - Vermelho"
+      var headerRow=rows[0]||[];
+      var detectedTurma='';
+      for(var i=0;i<headerRow.length;i++){
+        var v=(headerRow[i]||'').toString().trim();
+        if(/\d+\s*[ºoa]?\s*ANO/i.test(v)||/\d+\s*[ºaª]\s*S[ÉE]RIE/i.test(v)){
+          detectedTurma=v;break;
+        }
+      }
+      // Fallback: any cell with a digit + alphanumeric color/letter
+      if(!detectedTurma){
+        for(var i2=0;i2<headerRow.length;i2++){
+          var v2=(headerRow[i2]||'').toString().trim();
+          if(/\d/.test(v2)&&v2.length>2&&v2.length<40){detectedTurma=v2;break}
+        }
+      }
+      var turmaName=prompt('Qual o nome da turma?\n\n(Detectado da planilha: '+(detectedTurma||'?')+')',detectedTurma);
+      if(!turmaName||!turmaName.trim()){alert('Nome da turma é obrigatório.');return}
+      turmaName=turmaName.trim();
+      var turmaYear=prompt('Qual o ano/série? (opcional)\n\nExemplo: 6º Ano, 3º Ano, etc.','')||'';
+      parseFichaXlsxRows(rows,turmaName,turmaYear.trim());
+    }).catch(function(err){alert('Erro: '+err.message)});
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function parseFichaXlsxRows(rows,turmaName,turmaYear){
+  var result={sports:0,teams:0,players:0,wrn:[]};
+  turmaName=nrmYr(turmaName);
+  turmaYear=nrmYr(turmaYear);
+
+  // Find or create turma using kex() for robust matching
+  var inputKey=kex(turmaName);
+  var turma=S.cls.find(function(c){
+    if(nrmYr(c.nm)===turmaName)return true;
+    var ck=kex(c.nm);
+    return ck&&ck.length>=2&&ck===inputKey;
+  });
+  if(!turma){
+    turma={id:uid(),nm:uc(turmaName),yr:uc(turmaYear),pr:'Manhã'};
+    S.cls.push(turma);
+    result.wrn.push('Turma "'+turmaName+'" criada automaticamente');
+  } else {
+    if(turmaYear&&turmaYear!==turma.yr){
+      turma.yr=uc(turmaYear);
+      result.wrn.push('Ano da turma "'+turma.nm+'" atualizado para "'+turma.yr+'"');
+    }
+  }
+
+  var sportKeywords=['FUTEBOL','FUTSAL','HANDEBOL','HANDBALL','VÔLEI','VOLEI','VOLEIBOL','QUEIMADA','BASQUETE','BANDEIRINHA','XADREZ','PEBOLIM','FUTMESA','TENIS DE MESA','TÊNIS DE MESA','TENIS','TÊNIS','PING PONG','ATLETISMO','NATAÇÃO','NATACAO','CUBO','SOLETRANDO','MINECRAFT','ARTES','CONHECIMENTOS','DAMAS','REVEZAMENTO','50M','100M','PROVA'];
+
+  function isSportHeader(text){
+    if(!text)return false;
+    var up=text.toString().toUpperCase().trim();
+    if(up.length<3||up.length>40)return false;
+    return sportKeywords.some(function(k){return up.indexOf(k)>=0});
+  }
+  function parseSportName(text){
+    var clean=text.toString().replace(/\*+/g,'').trim();
+    var cat='Misto';
+    var up=clean.toUpperCase();
+    // Detect category by parenthetical or suffix: (FEMININO), (MASCULINO), (FEM.), (MASC.), (LIVRE)
+    if(/\bFEM(ININO)?\b|\bFEM\.?\)?$/i.test(up)||/\(FEM/i.test(up))cat='Feminino';
+    else if(/\bMASC(ULINO)?\b|\bMASC\.?\)?$/i.test(up)||/\(MASC/i.test(up))cat='Masculino';
+    else if(/\bMISTO\b|\(MISTO\)/i.test(up))cat='Misto';
+    else if(/\bLIVRE\b/i.test(up))cat='Misto';
+    // Strip category words from name
+    var sportName=clean
+      .replace(/\(\s*(FEM\.?|MASC\.?|FEMININO|MASCULINO|MISTO|LIVRE)\s*\)/gi,'')
+      .replace(/\s+(FEM\.?|MASC\.?|FEMININO|MASCULINO|MISTO|LIVRE)\b/gi,'')
+      .replace(/[\.\s]+$/,'').trim();
+    return{name:sportName,category:cat};
+  }
+  function isPlayerName(text){
+    if(!text)return false;
+    var s=text.toString().trim();
+    if(s.length<2||s.length>60)return false;
+    if(isSportHeader(s))return false;
+    if(/^OBSERVA[ÇC][ÕO]ES/i.test(s))return false;
+    if(/^INSCRITO|^SORTEADO/i.test(s))return false;
+    // Must contain at least one letter
+    if(!/[A-Za-zÀ-ÿ]/.test(s))return false;
+    return true;
+  }
+
+  // Parse vertically: each column may host one sport with players below.
+  // We track current sport per column and accumulate players until a new sport
+  // header (or empty cell sequence) appears in that column.
+  // Skip merged-cell slaves (cells that received a copy of a header that
+  // originated in another column) so we don't process the same header twice.
+  var mergedMap=rows._merged||[];
+  var maxCols=0;
+  rows.forEach(function(r){if(r&&r.length>maxCols)maxCols=r.length});
+  var colState=[];
+  for(var ci=0;ci<maxCols;ci++)colState.push({sport:null,players:[]});
+
+  function flushCol(idx){
+    var s=colState[idx];
+    if(s.sport&&s.players.length){
+      saveSportTeam(s.sport,s.players,turma,result);
+    }
+    s.sport=null;s.players=[];
+  }
+
+  rows.forEach(function(row,rIdx){
+    if(!row)return;
+    var rowMerged=mergedMap[rIdx]||[];
+    for(var ci=0;ci<maxCols;ci++){
+      var v=row[ci];
+      if(v==null||v==='')continue;
+      // Skip cells that are merge-cell slaves (copies, not originals).
+      // Their content was already processed in the origin column.
+      if(rowMerged[ci])continue;
+      var s=v.toString().trim();
+      if(!s)continue;
+      if(isSportHeader(s)){
+        // Flush previous sport in this column, start new
+        flushCol(ci);
+        colState[ci].sport=parseSportName(s);
+      } else if(colState[ci].sport&&isPlayerName(s)){
+        // Strip parenthetical annotations like (CR/CO)
+        var name=s.replace(/\s*\(.*?\)\s*/g,'').trim();
+        if(name&&name.length>1&&!colState[ci].players.find(function(p){return p.toLowerCase()===name.toLowerCase()})){
+          colState[ci].players.push(name);
+        }
+      }
+    }
+  });
+  // Flush remaining
+  for(var fi=0;fi<maxCols;fi++)flushCol(fi);
+
+  function saveSportTeam(sportInfo,players,turma,result){
+    if(!sportInfo||!sportInfo.name)return;
+    var sport=S.spt.find(function(s){return s.nm.toLowerCase()===sportInfo.name.toLowerCase()});
+    if(!sport){
+      sport={id:uid(),nm:uc(sportInfo.name),mn:1,mx:30,ct:['Masculino','Feminino','Misto'],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
+      S.spt.push(sport);result.sports++;
+    }
+    if(sport.ct.indexOf(sportInfo.category)<0)sport.ct.push(sportInfo.category);
+    var teamName=buildTeamName(turma.nm,sportInfo.category);
+    var existing=S.enr.find(function(e){return e.ci===turma.id&&e.si===sport.id&&e.ct===sportInfo.category});
+    if(existing){
+      existing.tn=teamName;
+      var oldPl=(existing.pl||'').split(',').map(function(p){return p.trim()}).filter(Boolean);
+      players.forEach(function(p){
+        if(!oldPl.find(function(op){return op.toLowerCase()===p.toLowerCase()}))oldPl.push(p);
+      });
+      existing.pl=oldPl.join(', ');
+      result.wrn.push('Equipe "'+teamName+'" atualizada com '+players.length+' atleta(s)');
+    } else {
+      S.enr.push({id:uid(),tn:teamName,ci:turma.id,si:sport.id,ct:sportInfo.category,pl:players.join(', '),st:'approved'});
+      result.teams++;
+    }
+    result.players+=players.length;
+  }
+
+  // Cleanup any leftover duplicates (defensive)
+  dedupeEnrollments();
+  logAudit('Importação XLSX (ficha)','Turma "'+turmaName+'": '+result.sports+' esporte(s), '+result.teams+' equipe(s), '+result.players+' jogador(es)');
+  S._docxResult={
+    msg:'✅ <b>Importação concluída!</b><br>📚 Turma: <b>'+turmaName+'</b><br>⚽ '+result.sports+' esporte(s) criado(s)<br>📋 '+result.teams+' equipe(s) criada(s)<br>👥 '+result.players+' atleta(s) importado(s)',
+    wrn:result.wrn
+  };
+  R();
+}
+
 function impDocx(file){
   if(!file.name.endsWith('.docx')){alert('Arquivo deve ser .docx');return}
   // Ask turma name
@@ -4232,19 +4534,34 @@ function parseDocxHtml(html,turmaName,turmaYear){
   div.innerHTML=html;
   var tables=div.querySelectorAll('table');
   if(!tables.length){alert('Nenhuma tabela encontrada no documento.');return}
-  
+
   var result={sports:0,teams:0,players:0,wrn:[]};
-  
+
   // Normalize turmaName to avoid duplicates from spacing/degree-char variations
   turmaName=nrmYr(turmaName);
   turmaYear=nrmYr(turmaYear);
-  
-  // Find or create turma
-  var turma=S.cls.find(function(c){return nrmYr(c.nm)===turmaName});
+
+  // Find or create turma — uses kex() for robust matching:
+  // "6º A" == "6º Ano A" == "6º ANO A" all collapse to key "6A".
+  // This prevents creating a duplicate turma when the bracket import
+  // already created one with a different name format.
+  var inputKey=kex(turmaName);
+  var turma=S.cls.find(function(c){
+    if(nrmYr(c.nm)===turmaName)return true;
+    var ck=kex(c.nm);
+    return ck&&ck.length>=2&&ck===inputKey;
+  });
   if(!turma){
     turma={id:uid(),nm:uc(turmaName),yr:uc(turmaYear),pr:'Manhã'};
     S.cls.push(turma);
     result.wrn.push('Turma "'+turmaName+'" criada automaticamente');
+  } else {
+    // Override yr with the value provided in the ficha import
+    // (user-confirmed answer: "Sobrescreve com o yr informado na importação")
+    if(turmaYear&&turmaYear!==turma.yr){
+      turma.yr=uc(turmaYear);
+      result.wrn.push('Ano da turma "'+turma.nm+'" atualizado para "'+turma.yr+'"');
+    }
   }
   
   // Known sport keywords to detect headers
@@ -7309,6 +7626,8 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
       S.enr.forEach(function(e){e.tn=uc(e.tn)});
       var nFixed=autoFixTeamNames();
       if(nFixed>0)console.log('autoFixTeamNames: corrected '+nFixed+' team name(s)');
+      var nMergedT=dedupeTurmas();
+      if(nMergedT>0)console.log('dedupeTurmas: merged '+nMergedT+' duplicate turma(s)');
       var nDeduped=dedupeEnrollments();
       if(nDeduped>0)console.log('dedupeEnrollments: removed '+nDeduped+' duplicate enrollment(s)');
       // Recompute group winners for all imported brackets (propagate GW_ slots)
