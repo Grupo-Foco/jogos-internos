@@ -1785,6 +1785,60 @@ function autoFixTeamNames(){
 // years. We pick the most-used "event year" (one containing JOGAR/JOGOS or
 // matching the first bracket key) and rewrite all turmas to that.
 // Returns count of turmas that had their yr rewritten.
+// Deduplicate sports: when multiple S.spt entries refer to the same logical
+// sport (e.g. "TENIS DE MESA" and "Tênis de mesa" with same gender, or
+// duplicates created across imports), keep one and migrate all references
+// (enrollments + bracket keys + podiums) to it. Returns count of merged sports.
+function dedupeSports(){
+  if(!S.spt||S.spt.length<2)return 0;
+  function _norm(s){return(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
+  var groups={};
+  S.spt.forEach(function(sp){
+    var key=_norm(sp.nm)+'|'+(sp.gender||'');
+    if(!groups[key])groups[key]=[];
+    groups[key].push(sp);
+  });
+  var merged=0;
+  Object.values(groups).forEach(function(g){
+    if(g.length<2)return;
+    // Keep the one with most enrollments referencing it; tie-break by name length
+    g.sort(function(a,b){
+      var ea=S.enr.filter(function(e){return e.si===a.id}).length;
+      var eb=S.enr.filter(function(e){return e.si===b.id}).length;
+      if(ea!==eb)return eb-ea;
+      return (b.nm||'').length-(a.nm||'').length;
+    });
+    var keeper=g[0];
+    for(var i=1;i<g.length;i++){
+      var dup=g[i];
+      // Migrate enrollments
+      S.enr.forEach(function(e){if(e.si===dup.id)e.si=keeper.id});
+      // Migrate bracket keys: "YEAR__dupId__SERIE" → "YEAR__keeperId__SERIE"
+      Object.keys(S.brk).forEach(function(bk){
+        var parts=bk.split('__');
+        if(parts[1]===dup.id){
+          parts[1]=keeper.id;
+          var newBk=parts.join('__');
+          if(!S.brk[newBk]){
+            S.brk[newBk]=S.brk[bk];
+          } else {
+            // Merge gender entries
+            Object.keys(S.brk[bk]).forEach(function(g2){
+              if(!S.brk[newBk][g2])S.brk[newBk][g2]=S.brk[bk][g2];
+            });
+          }
+          delete S.brk[bk];
+        }
+      });
+      // Migrate podiums
+      (S.podiums||[]).forEach(function(p){if(p.sportId===dup.id)p.sportId=keeper.id});
+      merged++;
+    }
+    S.spt=S.spt.filter(function(s){return s.id===keeper.id||g.indexOf(s)<0});
+  });
+  return merged;
+}
+
 function consolidateYears(){
   if(!S.cls||!S.cls.length)return 0;
   // Detect candidate event years: those containing JOGAR/JOGOS, or those
@@ -2959,6 +3013,9 @@ function pB(c){
   var apYear=getEnrByAno(S.bay,ap);
 
   // brkMeta: one entry per (sport, serie, gender)
+  // Sports listed here must have an actual bracket — individual sports
+  // imported via ficha (Artes, Atletismo, Xadrez etc.) belong to the
+  // "Individuais" section, not to Chaveamento.
   var brkMeta=[];
   brkAllKeys.forEach(function(bk){
     var parts=bk.split('__');
@@ -2968,21 +3025,24 @@ function pB(c){
     if(!sp)return;
     var genders=Object.keys(S.brk[bk]);
     genders.forEach(function(g){
+      // Only count rounds that contain at least one match.
+      // Empty bracket placeholders shouldn't show up in the sidebar either.
+      var rds=S.brk[bk][g];
+      if(!rds||!rds.length)return;
+      var hasMatch=rds.some(function(rd){return rd.m&&rd.m.length>0});
+      if(!hasMatch)return;
       brkMeta.push({bk:bk,spId:spId,spNm:sp.nm,serie:serie,gender:g});
     });
   });
-  // Also add from enrollments (schools without import)
-  apYear.forEach(function(e){
-    var sp=S.spt.find(function(s){return s.id===e.si});
-    if(!sp)return;
-    var bk=S.bay+'__'+e.si+'__GERAL';
-    if(!brkMeta.find(function(m){return m.bk===bk&&m.gender===e.ct}))
-      brkMeta.push({bk:bk,spId:e.si,spNm:sp.nm,serie:'GERAL',gender:e.ct});
-  });
+  // (Removed the legacy branch that added sports via enrollments.
+  //  Since chaveamento and inscrição were decoupled, Chaveamento is now
+  //  driven exclusively by S.brk. Sports that only exist as enrollments
+  //  — typical of Individuais like Xadrez or Atletismo — stay out of
+  //  this sidebar and are managed in the Individuais page instead.)
 
   if(!brkMeta.length){
     c.appendChild(h('div',{'class':'card'},h('div',{'class':'card-b'},
-      h('div',{'class':'em'},'Nenhum chaveamento para '+S.bay+'. Importe dados ou aprove inscricoes.'))));
+      h('div',{'class':'em'},'Nenhum chaveamento para '+S.bay+'. Importe um arquivo de chaveamento (HTML/XLSX/DOCX) no Dashboard.'))));
     return;
   }
 
@@ -4530,9 +4590,24 @@ function parseFichaXlsxRows(rows,turmaName,turmaYear){
 
   function saveSportTeam(sportInfo,players,turma,result){
     if(!sportInfo||!sportInfo.name)return;
-    var sport=S.spt.find(function(s){return s.nm.toLowerCase()===sportInfo.name.toLowerCase()});
+    // Normalize for comparison: strip accents + lowercase. This way
+    // "Tênis de mesa" matches "TENIS DE MESA" from the bracket import.
+    function _norm(s){return(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
+    var nameLow=_norm(sportInfo.name);
+    // First: try exact match name+gender
+    var sport=S.spt.find(function(s){
+      return _norm(s.nm)===nameLow&&(s.gender||'')===sportInfo.category;
+    });
+    // Fallback: name + Misto (when bracket sport has no per-gender split)
+    if(!sport)sport=S.spt.find(function(s){
+      return _norm(s.nm)===nameLow&&(!s.gender||s.gender==='Misto');
+    });
+    // Last fallback: name only (for sports without gender info — older data)
+    if(!sport)sport=S.spt.find(function(s){return _norm(s.nm)===nameLow&&!s.gender});
     if(!sport){
-      sport={id:uid(),nm:uc(sportInfo.name),mn:1,mx:30,ct:['Masculino','Feminino','Misto'],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
+      // No matching sport — create a new one tagged with the right gender so
+      // future enrollments don't drift.
+      sport={id:uid(),nm:uc(sportInfo.name),gender:sportInfo.category,mn:1,mx:30,ct:[sportInfo.category],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
       S.spt.push(sport);result.sports++;
     }
     if(sport.ct.indexOf(sportInfo.category)<0)sport.ct.push(sportInfo.category);
@@ -4716,10 +4791,21 @@ function parseDocxHtml(html,turmaName,turmaYear){
   });
   
   function saveSportTeam(sportInfo,players,turma,result){
-    // Find or create sport
-    var sport=S.spt.find(function(s){return s.nm.toLowerCase()===sportInfo.name.toLowerCase()});
+    // Find sport by name AND gender (bracket imports may have created
+    // separate entries for masc/fem of the same sport — see XLSX parser
+    // for full explanation). Names are compared accent-insensitively so
+    // "Tênis" and "TENIS" merge into one entry.
+    function _norm(s){return(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
+    var nameLow=_norm(sportInfo.name);
+    var sport=S.spt.find(function(s){
+      return _norm(s.nm)===nameLow&&(s.gender||'')===sportInfo.category;
+    });
+    if(!sport)sport=S.spt.find(function(s){
+      return _norm(s.nm)===nameLow&&(!s.gender||s.gender==='Misto');
+    });
+    if(!sport)sport=S.spt.find(function(s){return _norm(s.nm)===nameLow&&!s.gender});
     if(!sport){
-      sport={id:uid(),nm:uc(sportInfo.name),mn:2,mx:20,ct:['Masculino','Feminino'],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
+      sport={id:uid(),nm:uc(sportInfo.name),gender:sportInfo.category,mn:2,mx:20,ct:[sportInfo.category],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
       S.spt.push(sport);
       result.sports++;
     }
@@ -7706,6 +7792,8 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
       if(nFixed>0)console.log('autoFixTeamNames: corrected '+nFixed+' team name(s)');
       var nYrs=consolidateYears();
       if(nYrs>0)console.log('consolidateYears: rewrote yr on '+nYrs+' turma(s) to single event year');
+      var nMergedS=dedupeSports();
+      if(nMergedS>0)console.log('dedupeSports: merged '+nMergedS+' duplicate sport(s)');
       var nMergedT=dedupeTurmas();
       if(nMergedT>0)console.log('dedupeTurmas: merged '+nMergedT+' duplicate turma(s)');
       var nDeduped=dedupeEnrollments();
