@@ -1779,6 +1779,39 @@ function autoFixTeamNames(){
 // (e.g. "6º A", "6º Ano A", "6º ANO A" → all key "6A"), keep one and migrate
 // all references (enrollments + brackets + podiums + recursos) to it.
 // Returns count of removed duplicate turmas.
+// Consolidate turma years into a single event year. After ficha imports
+// some turmas may have ended up with yr="6º ANO" while others have
+// yr="JOGAR 2026" or yr="JOGOS 2026" — this splits filters across virtual
+// years. We pick the most-used "event year" (one containing JOGAR/JOGOS or
+// matching the first bracket key) and rewrite all turmas to that.
+// Returns count of turmas that had their yr rewritten.
+function consolidateYears(){
+  if(!S.cls||!S.cls.length)return 0;
+  // Detect candidate event years: those containing JOGAR/JOGOS, or those
+  // that appear as the first segment of a bracket key.
+  var eventYearCounts={};
+  S.cls.forEach(function(c){
+    var y=(c.yr||'').toUpperCase();
+    if(/JOGAR|JOGOS|EVENTO|TORNEIO|COPA|CAMPEONATO/i.test(y)){
+      eventYearCounts[c.yr]=(eventYearCounts[c.yr]||0)+1;
+    }
+  });
+  // Also consider first segments of bracket keys (very strong signal — that's
+  // the year actually keying the brackets)
+  Object.keys(S.brk).forEach(function(bk){
+    var y=bk.split('__')[0];
+    if(y)eventYearCounts[y]=(eventYearCounts[y]||0)+10; // weight bracket-derived more
+  });
+  var candidates=Object.entries(eventYearCounts).sort(function(a,b){return b[1]-a[1]});
+  if(!candidates.length)return 0;
+  var canonicalYear=candidates[0][0];
+  var changed=0;
+  S.cls.forEach(function(c){
+    if(c.yr!==canonicalYear){c.yr=canonicalYear;changed++}
+  });
+  return changed;
+}
+
 function dedupeTurmas(){
   if(!S.cls||S.cls.length<2)return 0;
   // Group by kex key — but only when the key is "useful" (>= 2 chars,
@@ -4379,8 +4412,9 @@ function impFichaXlsx(file){
       var turmaName=prompt('Qual o nome da turma?\n\n(Detectado da planilha: '+(detectedTurma||'?')+')',detectedTurma);
       if(!turmaName||!turmaName.trim()){alert('Nome da turma é obrigatório.');return}
       turmaName=turmaName.trim();
-      var turmaYear=prompt('Qual o ano/série? (opcional)\n\nExemplo: 6º Ano, 3º Ano, etc.','')||'';
-      parseFichaXlsxRows(rows,turmaName,turmaYear.trim());
+      // Turma year is no longer asked — new turmas inherit the event year
+      // (S.bay) automatically, keeping all data in a single year scope.
+      parseFichaXlsxRows(rows,turmaName,'');
     }).catch(function(err){alert('Erro: '+err.message)});
   };
   reader.readAsArrayBuffer(file);
@@ -4399,15 +4433,18 @@ function parseFichaXlsxRows(rows,turmaName,turmaYear){
     return ck&&ck.length>=2&&ck===inputKey;
   });
   if(!turma){
-    turma={id:uid(),nm:uc(turmaName),yr:uc(turmaYear),pr:'Manhã'};
+    // Brand new turma. yr defaults to the ano-evento (S.bay) so it joins the
+    // same scope as bracket-imported turmas. The user-typed year is ignored
+    // because mixing "6º Ano" with "JOGAR 2026" would split filters in two.
+    var defaultYr=S.bay||uc(turmaYear)||'JOGOS 2026';
+    turma={id:uid(),nm:uc(turmaName),yr:defaultYr,pr:'Manhã'};
     S.cls.push(turma);
     result.wrn.push('Turma "'+turmaName+'" criada automaticamente');
-  } else {
-    if(turmaYear&&turmaYear!==turma.yr){
-      turma.yr=uc(turmaYear);
-      result.wrn.push('Ano da turma "'+turma.nm+'" atualizado para "'+turma.yr+'"');
-    }
   }
+  // Note: yr of existing turmas is preserved on purpose. Bracket import sets
+  // yr to the event year (e.g. "JOGAR 2026") and that must stay intact —
+  // overriding with the user-typed "6º Ano" would split the schedule across
+  // two virtual years and create duplicate filter tabs in Chaveamento/Inscrições.
 
   var sportKeywords=['FUTEBOL','FUTSAL','HANDEBOL','HANDBALL','VÔLEI','VOLEI','VOLEIBOL','QUEIMADA','BASQUETE','BANDEIRINHA','XADREZ','PEBOLIM','FUTMESA','TENIS DE MESA','TÊNIS DE MESA','TENIS','TÊNIS','PING PONG','ATLETISMO','NATAÇÃO','NATACAO','CUBO','SOLETRANDO','MINECRAFT','ARTES','CONHECIMENTOS','DAMAS','REVEZAMENTO','50M','100M','PROVA'];
 
@@ -4528,11 +4565,11 @@ function parseFichaXlsxRows(rows,turmaName,turmaYear){
 
 function impDocx(file){
   if(!file.name.endsWith('.docx')){alert('Arquivo deve ser .docx');return}
-  // Ask turma name
+  // Ask turma name only — year is inherited from event (S.bay).
   var turmaName=prompt('Qual o nome da turma?\n\nExemplo: 6º Ano E, 3º Ano A, etc.');
   if(!turmaName||!turmaName.trim()){alert('Nome da turma é obrigatório.');return}
   turmaName=turmaName.trim();
-  var turmaYear=prompt('Qual o ano/série? (opcional)\n\nExemplo: 6º Ano, 3º Ano, etc.')||'';
+  var turmaYear='';
 
   var reader=new FileReader();
   reader.onload=function(e){
@@ -4599,17 +4636,16 @@ function parseDocxHtml(html,turmaName,turmaYear){
     return ck&&ck.length>=2&&ck===inputKey;
   });
   if(!turma){
-    turma={id:uid(),nm:uc(turmaName),yr:uc(turmaYear),pr:'Manhã'};
+    // New turma: default yr to event year (S.bay) to keep it in the same
+    // scope as bracket-imported turmas. Avoids splitting filters into
+    // "JOGAR 2026" vs "6º ANO".
+    var defaultYr=S.bay||uc(turmaYear)||'JOGOS 2026';
+    turma={id:uid(),nm:uc(turmaName),yr:defaultYr,pr:'Manhã'};
     S.cls.push(turma);
     result.wrn.push('Turma "'+turmaName+'" criada automaticamente');
-  } else {
-    // Override yr with the value provided in the ficha import
-    // (user-confirmed answer: "Sobrescreve com o yr informado na importação")
-    if(turmaYear&&turmaYear!==turma.yr){
-      turma.yr=uc(turmaYear);
-      result.wrn.push('Ano da turma "'+turma.nm+'" atualizado para "'+turma.yr+'"');
-    }
   }
+  // Existing turmas keep their yr (set by bracket import). Overriding it
+  // would split the school's data across two virtual years.
   
   // Known sport keywords to detect headers
   var sportKeywords=['FUTEBOL','FUTSAL','HANDEBOL','HANDBALL','VÔLEI','VOLEI','VOLEIBOL','QUEIMADA','BASQUETE','BANDEIRINHA','XADREZ','PEBOLIM','FUTMESA','ATLETISMO','NATAÇÃO','NATACAO','TÊNIS','TENIS','CUBO','SOLETRANDO','MINECRAFT','ARTES','CONHECIMENTOS'];
@@ -7668,6 +7704,8 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
       S.enr.forEach(function(e){e.tn=uc(e.tn)});
       var nFixed=autoFixTeamNames();
       if(nFixed>0)console.log('autoFixTeamNames: corrected '+nFixed+' team name(s)');
+      var nYrs=consolidateYears();
+      if(nYrs>0)console.log('consolidateYears: rewrote yr on '+nYrs+' turma(s) to single event year');
       var nMergedT=dedupeTurmas();
       if(nMergedT>0)console.log('dedupeTurmas: merged '+nMergedT+' duplicate turma(s)');
       var nDeduped=dedupeEnrollments();
