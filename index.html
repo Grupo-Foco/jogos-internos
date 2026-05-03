@@ -1690,19 +1690,29 @@ function buildTeamName(turmaNm,category){
   var nm=(turmaNm||'').trim();
   var numMatch=nm.match(/(\d+)/);
   var seriesNum=numMatch?numMatch[1]:'';
-  // Remove "Ano" and numbers to find the class letter
-  var cleaned=nm.replace(/[°º]/g,'').replace(/\d+/g,'').replace(/\bano\b/gi,'').trim();
+  // Remove "Ano" and numbers to find the class identifier (letter or color)
+  var cleaned=nm.replace(/[°º]/g,'').replace(/\d+/g,'').replace(/\bano\b/gi,'').replace(/\bs[eé]rie\b/gi,'').trim();
   var words=cleaned.split(/\s+/).filter(function(w){return w.length>0});
-  var classLetter='';
-  // Look for a single letter word (the class identifier: A, B, C, etc.)
+  var classIdent='';
+  // First try: a single letter word (3º A, 6º B…)
   for(var i=words.length-1;i>=0;i--){
     var w=words[i].replace(/[^A-Za-z]/g,'');
-    if(w.length===1){classLetter=w.toUpperCase();break}
+    if(w.length===1){classIdent=w.toUpperCase();break}
+  }
+  // Fallback: use the last meaningful word as-is (handles colors like "AMARELO",
+  // "VERMELHO", "ROXO" that aren't single letters). This keeps turma names unique
+  // when generating team labels — e.g. "8º AMARELO" → "8º AMARELO (F)" instead of
+  // "8º (F)" colliding across all 8º color teams.
+  if(!classIdent){
+    for(var j=words.length-1;j>=0;j--){
+      var w2=(words[j]||'').replace(/[^A-Za-zÀ-ÿ]/g,'');
+      if(w2.length>1){classIdent=w2.toUpperCase();break}
+    }
   }
   var catAbbr=category==='Masculino'?'(M)':category==='Feminino'?'(F)':'(X)';
-  if(seriesNum&&classLetter)return seriesNum+'º '+classLetter+' '+catAbbr;
+  if(seriesNum&&classIdent)return seriesNum+'º '+classIdent+' '+catAbbr;
   if(seriesNum)return seriesNum+'º '+catAbbr;
-  return nm.replace(/\s+/g,'').slice(0,4).toUpperCase()+' '+catAbbr;
+  return nm.replace(/\s+/g,'').slice(0,8).toUpperCase()+' '+catAbbr;
 }
 
 // Auto-fix all team names to standard format
@@ -1718,6 +1728,65 @@ function autoFixTeamNames(){
     }
   });
   return fixed;
+}
+
+// Deduplicate enrollments: when multiple enrollments exist for the same
+// (turma, sport, category) trio, keep the one with the longest player list
+// and merge any unique players from the others. Returns count of removed duplicates.
+function dedupeEnrollments(){
+  if(!S.enr||!S.enr.length)return 0;
+  var byKey={};
+  S.enr.forEach(function(e){
+    var key=(e.ci||'')+'|'+(e.si||'')+'|'+(e.ct||'');
+    if(!byKey[key])byKey[key]=[];
+    byKey[key].push(e);
+  });
+  var removed=0;
+  var keepIds={};
+  Object.values(byKey).forEach(function(group){
+    if(group.length===1){keepIds[group[0].id]=true;return}
+    // Sort by pl length desc, then approved status, then by oldest id
+    group.sort(function(a,b){
+      var lenDiff=(b.pl||'').length-(a.pl||'').length;
+      if(lenDiff!==0)return lenDiff;
+      if(a.st==='approved'&&b.st!=='approved')return -1;
+      if(b.st==='approved'&&a.st!=='approved')return 1;
+      return 0;
+    });
+    var keeper=group[0];
+    keepIds[keeper.id]=true;
+    // Merge unique players from duplicates
+    var allPlayers=(keeper.pl||'').split(/[,;\n]/).map(function(p){return p.trim()}).filter(Boolean);
+    for(var i=1;i<group.length;i++){
+      var ps=(group[i].pl||'').split(/[,;\n]/).map(function(p){return p.trim()}).filter(Boolean);
+      ps.forEach(function(p){
+        var lower=p.toLowerCase();
+        if(!allPlayers.find(function(x){return x.toLowerCase()===lower}))allPlayers.push(p);
+      });
+      removed++;
+      // Migrate bracket references from removed enrollment id to keeper id
+      var oldId=group[i].id;
+      Object.keys(S.brk).forEach(function(bk){
+        Object.keys(S.brk[bk]).forEach(function(ct){
+          S.brk[bk][ct]=S.brk[bk][ct].map(function(rd){
+            return Object.assign({},rd,{m:rd.m.map(function(m){
+              var nm=Object.assign({},m);
+              if(nm.t1===oldId)nm.t1=keeper.id;
+              if(nm.t2===oldId)nm.t2=keeper.id;
+              if(nm.w===oldId)nm.w=keeper.id;
+              if(nm.wo===oldId)nm.wo=keeper.id;
+              if(nm._slot1===oldId)nm._slot1=keeper.id;
+              if(nm._slot2===oldId)nm._slot2=keeper.id;
+              return nm;
+            })});
+          });
+        });
+      });
+    }
+    keeper.pl=allPlayers.join(', ');
+  });
+  S.enr=S.enr.filter(function(e){return keepIds[e.id]});
+  return removed;
 }
 function getEnrByAno(ano,ap){var cids=getClsByAno(ano).map(function(c){return c.id});return ap.filter(function(e){return cids.indexOf(e.ci)>=0})}
 
@@ -2181,8 +2250,11 @@ function h(tag,attrs){
 
 function R(){
   var root=document.getElementById('app');
-  // Save scroll position before re-render to prevent scroll-to-top bug
+  // Save scroll positions before re-render to prevent scroll-to-top bug
   var _scrollY=window.scrollY||document.documentElement.scrollTop||0;
+  // Side filter panels (.sb-filter-box) scroll independently — capture each by index
+  var _filterScrolls=[];
+  Array.from(document.querySelectorAll('.sb-filter-box')).forEach(function(b){_filterScrolls.push(b.scrollTop)});
   root.innerHTML='';
   document.body.className=S.theme==='light'?'light':'';
 
@@ -2334,6 +2406,14 @@ function R(){
   if(!S.mod)scheduleSave();
   // Restore scroll position after re-render
   if(_scrollY>0)requestAnimationFrame(function(){window.scrollTo(0,_scrollY);});
+  // Restore filter-box scroll positions (lateral filters in Chaveamento)
+  if(_filterScrolls.length){
+    requestAnimationFrame(function(){
+      Array.from(document.querySelectorAll('.sb-filter-box')).forEach(function(b,i){
+        if(_filterScrolls[i]!=null)b.scrollTop=_filterScrolls[i];
+      });
+    });
+  }
 }
 
 function pD(c){
@@ -2859,7 +2939,10 @@ function pB(c){
       if(!confirm('Apagar chaveamento e sortear novamente?'))return;
       cb();
     }
-    if(tms.length>=2){
+    if(tms.length>=2&&!hasImported){
+      // These buttons only make sense for brackets generated inside the app
+      // (manual seeding). Imported brackets keep their original structure to
+      // avoid accidental destruction of pre-defined matches/dates/locations.
       bar.appendChild(h('button',{
         'class':'btn btn-p',
         style:hasEx?{background:'linear-gradient(135deg,#b45309,#92400e)',boxShadow:'0 0 0 2px #fbbf24'}:{},
@@ -2881,29 +2964,34 @@ function pB(c){
         });
       }},has3rd?'3o Lugar: ON':'3o Lugar: OFF'));
     }
-    bar.appendChild(h('button',{'class':'btn',onclick:function(){S.mod={tp:'autoSch',bkey:bkey,ct:S.bc};R()}},'Agendar Auto'));
-    // Manual trigger for finalist recomputation (debug + user request)
-    bar.appendChild(h('button',{'class':'btn',title:'Recalcular finalistas baseado nos resultados',onclick:function(){
-      try{
-        window.__DEBUG_RECOMPUTE=true;
-        console.log('=== Manual recompute triggered ===');
-        recomputeGroupWinners(bkey,S.bc);
-        window.__DEBUG_RECOMPUTE=false;
-        // Also show standings in alert
-        var rds2=S.brk[bkey]&&S.brk[bkey][S.bc]?S.brk[bkey][S.bc]:[];
-        var msg='Recálculo concluído. Veja o console (F12) para detalhes.';
-        // Try to show finalist info
-        var finalRd=rds2.find(function(r){return r.m.some(function(m){return m._slot1||m._slot2})});
-        if(finalRd){
-          msg+='\n\nFinalistas:';
-          finalRd.m.forEach(function(m){
-            msg+='\n• '+tName(m.t1)+' × '+tName(m.t2);
-          });
-        }
-        alert(msg);
-        R();
-      }catch(e){alert('Erro: '+e.message);console.error(e);}
-    }},'🔄 Recalcular'));
+    if(!hasImported){
+      bar.appendChild(h('button',{'class':'btn',onclick:function(){S.mod={tp:'autoSch',bkey:bkey,ct:S.bc};R()}},'Agendar Auto'));
+      // Manual trigger for finalist recomputation (debug + user request)
+      bar.appendChild(h('button',{'class':'btn',title:'Recalcular finalistas baseado nos resultados',onclick:function(){
+        try{
+          window.__DEBUG_RECOMPUTE=true;
+          console.log('=== Manual recompute triggered ===');
+          recomputeGroupWinners(bkey,S.bc);
+          window.__DEBUG_RECOMPUTE=false;
+          var rds2=S.brk[bkey]&&S.brk[bkey][S.bc]?S.brk[bkey][S.bc]:[];
+          var msg='Recálculo concluído. Veja o console (F12) para detalhes.';
+          var finalRd=rds2.find(function(r){return r.m.some(function(m){return m._slot1||m._slot2})});
+          if(finalRd){
+            msg+='\n\nFinalistas:';
+            finalRd.m.forEach(function(m){
+              msg+='\n• '+tName(m.t1)+' × '+tName(m.t2);
+            });
+          }
+          alert(msg);
+          R();
+        }catch(e){alert('Erro: '+e.message);console.error(e);}
+      }},'🔄 Recalcular'));
+    } else {
+      // Subtle indicator that this bracket came from an imported file
+      bar.appendChild(h('span',{style:{fontSize:'10px',color:'var(--tx3)',display:'inline-flex',alignItems:'center',gap:'4px',padding:'4px 10px',background:'var(--bg3)',borderRadius:'12px',border:'1px solid var(--br)'}},
+        '📥 Chaveamento importado'
+      ));
+    }
     bar.appendChild(h('button',{'class':'btn',style:{marginLeft:'auto'},onclick:function(){exportBracketByKey(bkey,S.bc)}},'Exportar'));
     if(bar.children.length)main.appendChild(bar);
   }
@@ -3355,12 +3443,64 @@ function pB(c){
   wrap.appendChild(main);
   c.appendChild(wrap);
 
-  // Player list
+  // Player roster: list each unique turma in this bracket with its atletas
   if(tms.length){
+    // Deduplicate by class+gender (ignore S.enr duplicates that came from
+    // multiple imports). Keep the latest enrollment when multiple exist.
+    var rosterByCi={};
+    tms.forEach(function(e){
+      var key=e.ci+'|'+e.ct;
+      // Prefer the most recent entry that has player names
+      if(!rosterByCi[key])rosterByCi[key]=e;
+      else if((e.pl||'').length>(rosterByCi[key].pl||'').length)rosterByCi[key]=e;
+    });
+    var rosterList=Object.values(rosterByCi);
+    // Sort by class name (1º A → 9º H)
+    function _serieRank(nm){
+      var up=(nm||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
+      var mSer=up.match(/^(\d+)[\u00baª]\s*S[ÉE]RIE/);
+      if(mSer)return 10+(parseInt(mSer[1])||0);
+      var mAno=up.match(/^(\d+)[\u00ba]?\s*ANO/)||up.match(/^(\d+)[\u00ba]\s+/);
+      if(mAno)return parseInt(mAno[1])||99;
+      if(/ENS\.?\s*M[EÉ]DIO/.test(up))return 20;
+      return 99;
+    }
+    rosterList.sort(function(a,b){
+      var ca=S.cls.find(function(x){return x.id===a.ci});
+      var cb=S.cls.find(function(x){return x.id===b.ci});
+      var ra=_serieRank(ca&&ca.nm),rb=_serieRank(cb&&cb.nm);
+      if(ra!==rb)return ra-rb;
+      return ((ca&&ca.nm)||'').localeCompare((cb&&cb.nm)||'','pt');
+    });
+
     var plDiv=h('div',{'class':'card',style:{marginTop:'16px'}});
-    plDiv.appendChild(h('div',{'class':'card-h'},h('div',{'class':'card-t'},'Equipes inscritas')));
-    var plBody=h('div',{'class':'card-b',style:{display:'flex',gap:'6px',flexWrap:'wrap'}});
-    tms.forEach(function(e){var cl=S.cls.find(function(x){return x.id===e.ci});plBody.appendChild(h('span',{'class':'badge bc',style:{fontSize:'11px',padding:'4px 10px'}},e.tn||(cl&&cl.nm)||'?'))});
+    plDiv.appendChild(h('div',{'class':'card-h'},
+      h('div',{'class':'card-t'},'👥 Equipes inscritas — atletas'),
+      h('div',{style:{fontSize:'11px',color:'var(--tx3)'}},rosterList.length+' equipe(s) · '+(sp2?sp2.nm:'')+' '+S.bc)
+    ));
+    var plBody=h('div',{'class':'card-b',style:{display:'flex',flexDirection:'column',gap:'10px'}});
+    var ECOLS={'ROXO':'#8b5cf6','VERDE':'#22c55e','VERMELHO':'#ef4444','AMARELO':'#eab308','AZUL':'#3b82f6','ROSA':'#ec4899','PRETO':'#374151','CINZA':'#6b7280','LARANJA':'#f97316'};
+    function ec(nm){var col='var(--tx3)';var u=(nm||'').toUpperCase();Object.entries(ECOLS).forEach(function(ee){if(u.indexOf(ee[0])>=0)col=ee[1]});return col;}
+
+    rosterList.forEach(function(e){
+      var cl=S.cls.find(function(x){return x.id===e.ci});
+      var clNm=(cl&&cl.nm)||e.tn||'?';
+      var players=(e.pl||'').split(/[,;\n]/).map(function(p){return p.trim()}).filter(function(p){return p.length>1});
+      var row=h('div',{style:{padding:'10px 12px',background:'var(--bg3)',border:'1px solid var(--br)',borderRadius:'8px'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:players.length?'6px':'0',flexWrap:'wrap'}},
+          h('span',{style:{width:'10px',height:'10px',borderRadius:'50%',background:ec(clNm),flexShrink:'0'}}),
+          h('span',{style:{fontWeight:'700',fontSize:'13px',color:'var(--tx)'}},clNm),
+          e.tn&&e.tn!==clNm?h('span',{style:{fontSize:'10px',color:'var(--tx3)'}},'· '+e.tn):null,
+          h('span',{style:{fontSize:'10px',color:'var(--tx3)',marginLeft:'auto'}},players.length+' atleta(s)')
+        ),
+        players.length
+          ?h('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',paddingLeft:'18px'}},
+              players.map(function(p){return h('span',{style:{fontSize:'11px',color:'var(--tx2)',padding:'2px 8px',background:'var(--bg2)',borderRadius:'10px',border:'1px solid var(--br)'}},p)})
+            )
+          :h('div',{style:{paddingLeft:'18px',fontSize:'11px',color:'var(--tx3)',fontStyle:'italic'}},'Sem atletas cadastrados — importe a ficha de inscrição (Importar → DOCX) ou edite a equipe.')
+      );
+      plBody.appendChild(row);
+    });
     plDiv.appendChild(plBody);
     c.appendChild(plDiv);
   }
@@ -7169,6 +7309,8 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
       S.enr.forEach(function(e){e.tn=uc(e.tn)});
       var nFixed=autoFixTeamNames();
       if(nFixed>0)console.log('autoFixTeamNames: corrected '+nFixed+' team name(s)');
+      var nDeduped=dedupeEnrollments();
+      if(nDeduped>0)console.log('dedupeEnrollments: removed '+nDeduped+' duplicate enrollment(s)');
       // Recompute group winners for all imported brackets (propagate GW_ slots)
       try{
         Object.entries(S.brk).forEach(function(bke){
