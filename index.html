@@ -1724,6 +1724,35 @@ function nrmYr(y){return(y||'').replace(/[°º]/g,'º').replace(/\s+/g,' ').trim
 function getAnos(){var a=[];S.cls.forEach(function(c){var y=nrmYr(c.yr);if(y&&a.indexOf(y)<0)a.push(y)});a.sort();return a}
 function getClsByAno(ano){return S.cls.filter(function(c){return nrmYr(c.yr)===ano})}
 
+// Detect turma name from a ficha filename. Recognizes patterns like:
+//   "Ficha_de_Inscrição_-_1º_ano_-_JIM_AMARELA_2026.xlsx" → "1º ANO AMARELA"
+//   "Ficha-2-SERIE-AZUL.xlsx" → "2ª SÉRIE AZUL"
+//   "Ficha 6 ano A.docx" → "6º ANO A"
+// Returns null when nothing recognizable is found.
+function detectTurmaFromFilename(filename){
+  if(!filename)return null;
+  var name=String(filename).replace(/\.(xlsx|xls|docx)$/i,'');
+  name=name.replace(/[_\-]+/g,' ').replace(/\s+/g,' ');
+  var up=name.toUpperCase();
+  var serie=null;
+  var mAno=up.match(/(\d+)\s*[ºO°]?\s*ANO/);
+  var mSer=up.match(/(\d+)\s*[ªA°]?\s*S[ÉE]RIE/);
+  if(mAno)serie=mAno[1]+'º ANO';
+  else if(mSer)serie=mSer[1]+'ª SÉRIE';
+  var COLORS=['AMARELA','AMARELO','AZUL','VERDE','VERMELHA','VERMELHO','ROXO','ROXA','ROSA','PRETO','PRETA','BRANCO','BRANCA','CINZA','LARANJA'];
+  var color=null;
+  for(var i=0;i<COLORS.length;i++){
+    if(up.indexOf(COLORS[i])>=0){color=COLORS[i];break;}
+  }
+  if(!color){
+    var mLetter=up.match(/\b\d+\s*[ºO°]?\s*ANO\s+([A-H])\b/);
+    if(mLetter)color=mLetter[1];
+  }
+  if(!serie&&!color)return null;
+  if(serie&&color)return serie+' '+color;
+  return serie||color;
+}
+
 // Uppercase helper for user input
 function uc(s){return(s||'').trim().toUpperCase()}
 
@@ -2603,6 +2632,7 @@ function R(){
   root.appendChild(bnav);
   if(S.mod&&S.mod.tp==='settings')mSettings(root);
   if(S.mod&&S.mod.tp==='importBrk')mImportBrk(root);
+  if(S.mod&&S.mod.tp==='fichasBatch')mFichasBatch(root);
   if(S.mod&&S.mod.tp==='result'){
     // Find the match object from brk using mid+bk+ct
     var _bk=S.mod.bk,_ct=S.mod.ct,_mid=S.mod.mid;
@@ -4398,24 +4428,36 @@ function pI(c){
     )
   ));
 
-  // ── DOCX/XLSX Ficha de Inscrição Import ─────────────────────────────
+  // ── DOCX/XLSX Ficha de Inscrição Import (multi-arquivo) ────────────────
   var dz2=h('div',{'class':'dz'});
   dz2.appendChild(h('div',{style:{fontSize:'36px',marginBottom:'8px',opacity:'.6'}},'📄'));
   dz2.appendChild(h('div',{style:{fontSize:'14px',fontWeight:'600'}},'Importar Ficha de Inscrição (.docx ou .xlsx)'));
-  dz2.appendChild(h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'3px'}},'Word ou Excel com esportes e jogadores'));
-  var inp2=h('input',{type:'file',accept:'.docx,.xlsx,.xls'});
-  function _routeFicha(file){
-    if(!file)return;
-    var ext=(file.name||'').split('.').pop().toLowerCase();
-    if(ext==='docx')return impDocx(file);
-    if(ext==='xlsx'||ext==='xls')return impFichaXlsx(file);
-    alert('Use arquivo .docx ou .xlsx');
+  dz2.appendChild(h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'3px'}},'1 ou mais arquivos · detecta a turma pelo nome'));
+  var inp2=h('input',{type:'file',accept:'.docx,.xlsx,.xls',multiple:true});
+  function _routeFichas(files){
+    if(!files||!files.length)return;
+    var arr=[];
+    for(var i=0;i<files.length;i++){
+      var f=files[i];
+      var ext=(f.name||'').split('.').pop().toLowerCase();
+      if(ext==='docx'||ext==='xlsx'||ext==='xls')arr.push(f);
+    }
+    if(!arr.length){alert('Use arquivos .docx ou .xlsx');return}
+    if(arr.length===1){
+      // Single file: keep legacy flow (with auto-detect + prompt fallback)
+      var f0=arr[0];
+      var ext0=(f0.name||'').split('.').pop().toLowerCase();
+      if(ext0==='docx')return impDocx(f0);
+      return impFichaXlsx(f0);
+    }
+    // Multi-file: open batch confirm dialog
+    impFichasBatch(arr);
   }
-  inp2.onchange=function(e){_routeFicha(e.target.files[0])};
+  inp2.onchange=function(e){_routeFichas(e.target.files)};
   dz2.appendChild(inp2);
   dz2.ondragover=function(e){e.preventDefault();dz2.classList.add('drag')};
   dz2.ondragleave=function(){dz2.classList.remove('drag')};
-  dz2.ondrop=function(e){e.preventDefault();dz2.classList.remove('drag');_routeFicha(e.dataTransfer.files[0])};
+  dz2.ondrop=function(e){e.preventDefault();dz2.classList.remove('drag');_routeFichas(e.dataTransfer.files)};
 
   var docxRes=h('div',{});
   if(S._docxResult){
@@ -4427,7 +4469,7 @@ function pI(c){
   c.appendChild(h('div',{'class':'card',style:{marginTop:'16px'}},
     h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📄 Importar Ficha de Inscrição (DOCX/XLSX)')),
     h('div',{'class':'card-b'},
-      h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.7'},html:'Importe as fichas de inscrição das turmas no formato <b>.docx</b> (Word) ou <b>.xlsx</b> (Excel).<br>O sistema detecta automaticamente os <b style="color:var(--gn)">esportes</b>, <b style="color:var(--pu)">categorias</b> e <b style="color:var(--pr)">jogadores</b>.<br><span style="color:var(--am)">O nome da turma será solicitado na importação.</span>'}),
+      h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.7'},html:'Importe as fichas de inscrição das turmas em <b>.docx</b> (Word) ou <b>.xlsx</b> (Excel).<br>O sistema detecta automaticamente os <b style="color:var(--gn)">esportes</b>, <b style="color:var(--pu)">categorias</b> e <b style="color:var(--pr)">jogadores</b>.<br><span style="color:var(--am)">⚡ Selecione vários arquivos de uma vez — o nome da turma é detectado pelo nome do arquivo (ex.: <code>Ficha_5_ano_VERMELHO.xlsx</code>).</span>'}),
       dz2,docxRes
     )
   ));
@@ -4441,19 +4483,56 @@ function pI(c){
 // ══════════════════════════════════════════════════════════════════════════
 // XLSX FICHA DE INSCRIÇÃO IMPORT (same layout as DOCX, but rows in Excel cells)
 // ══════════════════════════════════════════════════════════════════════════
+// Read an XLSX ficha file and import its data using `turmaName` as the class.
+// Returns a Promise that resolves with the result object {sports,teams,players,wrn}.
+// Used both by single-file flow and by impFichasBatch for multi-upload.
+function impFichaXlsxAuto(file,turmaName){
+  return new Promise(function(resolve,reject){
+    if(!XLSXMini){reject(new Error('parser XLSX não carregado'));return}
+    var reader=new FileReader();
+    reader.onload=function(ev){
+      XLSXMini.read(ev.target.result).then(function(wb){
+        if(!wb){reject(new Error('Não foi possível ler o XLSX'));return}
+        var sN=Object.keys(wb);
+        if(!sN.length){reject(new Error('Planilha sem abas'));return}
+        var rows=wb[sN[0]];
+        if(!rows||!rows.length){reject(new Error('Planilha vazia'));return}
+        try{
+          var result=parseFichaXlsxRows(rows,turmaName,'');
+          resolve(result);
+        }catch(e){reject(e)}
+      }).catch(reject);
+    };
+    reader.onerror=function(){reject(new Error('Erro ao ler arquivo'))};
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// Legacy single-file flow: detect or prompt for turma, then call _Auto.
 function impFichaXlsx(file){
+  // Try to detect from filename first
+  var fromName=detectTurmaFromFilename(file.name);
+  // Fallback: detect from cell B1 of the file
+  if(fromName){
+    impFichaXlsxAuto(file,fromName).then(function(result){
+      S._docxResult={
+        msg:'✅ <b>Importação concluída!</b><br>📚 Turma: <b>'+fromName+'</b><br>⚽ '+result.sports+' esporte(s) criado(s)<br>📋 '+result.teams+' equipe(s) criada(s)<br>👥 '+result.players+' atleta(s) importado(s)',
+        wrn:result.wrn
+      };
+      R();
+    }).catch(function(e){alert('Erro: '+e.message)});
+    return;
+  }
+  // Detection failed — prompt user
   if(!XLSXMini){alert('Erro: parser XLSX não carregado.');return}
   var reader=new FileReader();
   reader.onload=function(ev){
     XLSXMini.read(ev.target.result).then(function(wb){
       if(!wb){alert('Não foi possível ler o XLSX.');return}
-      // Pick first sheet (usually 'FICHA')
       var sN=Object.keys(wb);
       if(!sN.length){alert('Planilha sem abas.');return}
       var rows=wb[sN[0]];
       if(!rows||!rows.length){alert('Planilha vazia.');return}
-      // Try to autodetect turma name from first non-empty cells of header row
-      // Common pattern: cell A1 = abbreviation (e.g. "AMA"), B1 = "5º ano - Vermelho"
       var headerRow=rows[0]||[];
       var detectedTurma='';
       for(var i=0;i<headerRow.length;i++){
@@ -4462,19 +4541,15 @@ function impFichaXlsx(file){
           detectedTurma=v;break;
         }
       }
-      // Fallback: any cell with a digit + alphanumeric color/letter
-      if(!detectedTurma){
-        for(var i2=0;i2<headerRow.length;i2++){
-          var v2=(headerRow[i2]||'').toString().trim();
-          if(/\d/.test(v2)&&v2.length>2&&v2.length<40){detectedTurma=v2;break}
-        }
-      }
       var turmaName=prompt('Qual o nome da turma?\n\n(Detectado da planilha: '+(detectedTurma||'?')+')',detectedTurma);
       if(!turmaName||!turmaName.trim()){alert('Nome da turma é obrigatório.');return}
       turmaName=turmaName.trim();
-      // Turma year is no longer asked — new turmas inherit the event year
-      // (S.bay) automatically, keeping all data in a single year scope.
-      parseFichaXlsxRows(rows,turmaName,'');
+      var result=parseFichaXlsxRows(rows,turmaName,'');
+      S._docxResult={
+        msg:'✅ <b>Importação concluída!</b><br>📚 Turma: <b>'+turmaName+'</b><br>⚽ '+result.sports+' esporte(s) criado(s)<br>📋 '+result.teams+' equipe(s) criada(s)<br>👥 '+result.players+' atleta(s) importado(s)',
+        wrn:result.wrn
+      };
+      R();
     }).catch(function(err){alert('Erro: '+err.message)});
   };
   reader.readAsArrayBuffer(file);
@@ -4665,37 +4740,254 @@ function parseFichaXlsxRows(rows,turmaName,turmaYear){
   // Cleanup any leftover duplicates (defensive)
   dedupeEnrollments();
   logAudit('Importação XLSX (ficha)','Turma "'+turmaName+'": '+result.sports+' esporte(s), '+result.teams+' equipe(s), '+result.players+' jogador(es)');
-  S._docxResult={
-    msg:'✅ <b>Importação concluída!</b><br>📚 Turma: <b>'+turmaName+'</b><br>⚽ '+result.sports+' esporte(s) criado(s)<br>📋 '+result.teams+' equipe(s) criada(s)<br>👥 '+result.players+' atleta(s) importado(s)',
-    wrn:result.wrn
-  };
+  // Caller is responsible for setting S._docxResult and re-rendering.
+  // (Batch import collects all results before rendering so the UI doesn't
+  // flicker per-file.)
+  result.turmaName=turmaName;
+  return result;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// MULTI-FILE FICHA IMPORT (batch)
+// ══════════════════════════════════════════════════════════════════════════
+// Workflow:
+//   1. User selects multiple .xlsx/.docx files (or drops a folder).
+//   2. We detect the turma name from each filename and show a confirmation
+//      modal with all detections side-by-side. Cells with failed detection
+//      are highlighted; the user can edit any name before confirming.
+//   3. On confirm, we process each file in sequence, accumulating results
+//      to show a single summary at the end. UI re-renders only once.
+function impFichasBatch(files){
+  // Build the items list with auto-detected names
+  var items=[];
+  for(var i=0;i<files.length;i++){
+    var f=files[i];
+    var detected=detectTurmaFromFilename(f.name);
+    items.push({
+      file:f,
+      filename:f.name,
+      ext:(f.name||'').split('.').pop().toLowerCase(),
+      turmaName:detected||'',
+      detected:!!detected,
+      status:'pending', // 'pending' | 'ok' | 'error'
+      result:null,
+      error:null
+    });
+  }
+  S.mod={tp:'fichasBatch',items:items,running:false};
   R();
+}
+
+function mFichasBatch(c){
+  var items=S.mod.items;
+  var running=S.mod.running;
+  var allDone=items.every(function(it){return it.status==='ok'||it.status==='error'});
+
+  var ov=h('div',{'class':'ov'});
+  ov.onclick=function(e){if(e.target===ov&&!running){S.mod=null;R()}};
+  var close=function(){if(running)return;S.mod=null;R()};
+
+  var md=h('div',{'class':'md',style:{maxWidth:'720px'}});
+  md.appendChild(h('div',{'class':'md-h'},
+    h('h3',{},'📄 Importar '+items.length+' fichas — confirmação'),
+    h('button',{'class':'btn btn-s',onclick:close},'✕')
+  ));
+
+  var body=h('div',{style:{padding:'14px 20px',maxHeight:'60vh',overflowY:'auto'}});
+
+  if(!running&&!allDone){
+    body.appendChild(h('p',{style:{fontSize:'13px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.5'}},
+      'Confira o nome da turma detectado para cada arquivo. Você pode editar manualmente antes de importar. Linhas em ',
+      h('span',{style:{color:'var(--am)',fontWeight:'700'}},'amarelo'),
+      ' não tiveram a turma reconhecida automaticamente.'));
+  }
+
+  // Build the items table
+  items.forEach(function(it,idx){
+    var bg=it.status==='ok'?'rgba(52,211,153,.08)':
+           it.status==='error'?'rgba(248,113,113,.08)':
+           !it.detected?'rgba(251,191,36,.06)':'var(--c2)';
+    var border=it.status==='ok'?'rgba(52,211,153,.3)':
+               it.status==='error'?'rgba(248,113,113,.3)':
+               !it.detected?'rgba(251,191,36,.3)':'var(--br)';
+    var row=h('div',{style:{padding:'10px 12px',background:bg,border:'1px solid '+border,borderRadius:'8px',marginBottom:'6px',display:'grid',gridTemplateColumns:'24px 1fr 200px 80px',gap:'10px',alignItems:'center'}});
+    // Status icon
+    var icon=it.status==='ok'?'✅':it.status==='error'?'❌':!it.detected?'⚠️':'📄';
+    row.appendChild(h('div',{style:{fontSize:'18px',textAlign:'center'}},icon));
+    // Filename
+    row.appendChild(h('div',{style:{fontSize:'12px',color:'var(--tx2)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},title:it.filename},
+      h('div',{style:{fontFamily:'monospace',fontSize:'11px'}},it.filename),
+      it.status==='error'?h('div',{style:{fontSize:'10px',color:'var(--rd)',marginTop:'2px'}},it.error||''):
+      it.status==='ok'?h('div',{style:{fontSize:'10px',color:'var(--gn)',marginTop:'2px'}},'+'+(it.result?it.result.teams:0)+' equipes · '+(it.result?it.result.players:0)+' atletas'):null
+    ));
+    // Editable turma name input
+    var inp=h('input',{
+      'class':'fi',
+      style:{fontSize:'12px',padding:'6px 8px',background:it.detected?'var(--bg3)':'rgba(251,191,36,.1)'},
+      value:it.turmaName,
+      placeholder:'Nome da turma',
+      readonly:running||it.status==='ok',
+      oninput:(function(idx2){return function(e){items[idx2].turmaName=e.target.value;items[idx2].detected=!!e.target.value.trim()}})(idx)
+    });
+    row.appendChild(inp);
+    // Remove button
+    row.appendChild(h('button',{
+      'class':'btn btn-s btn-r',
+      style:{padding:'4px 8px',fontSize:'11px'},
+      disabled:running||it.status==='ok',
+      onclick:(function(idx2){return function(){items.splice(idx2,1);if(!items.length){S.mod=null}R()}})(idx)
+    },'Remover'));
+    body.appendChild(row);
+  });
+
+  // Stats / summary footer
+  if(running||allDone){
+    var nOk=items.filter(function(it){return it.status==='ok'}).length;
+    var nErr=items.filter(function(it){return it.status==='error'}).length;
+    var totalSports=items.reduce(function(s,it){return s+(it.result?it.result.sports:0)},0);
+    var totalTeams=items.reduce(function(s,it){return s+(it.result?it.result.teams:0)},0);
+    var totalPlayers=items.reduce(function(s,it){return s+(it.result?it.result.players:0)},0);
+    body.appendChild(h('div',{style:{marginTop:'14px',padding:'12px 14px',background:'var(--c2)',border:'1px solid var(--br)',borderRadius:'8px',fontSize:'13px'}},
+      h('div',{style:{fontWeight:'700',marginBottom:'6px'}},allDone?'✅ Importação concluída':'⏳ Processando...'),
+      h('div',{style:{fontSize:'11px',color:'var(--tx2)',lineHeight:'1.6'}},
+        nOk+' arquivo(s) importado(s) com sucesso',
+        nErr?h('span',{style:{color:'var(--rd)'}},' · '+nErr+' falharam'):null,
+        h('br'),
+        '⚽ '+totalSports+' esporte(s) novo(s) · 📋 '+totalTeams+' equipe(s) · 👥 '+totalPlayers+' atleta(s)'
+      )
+    ));
+  }
+
+  md.appendChild(body);
+
+  // Footer buttons
+  var footer=h('div',{style:{padding:'12px 20px',borderTop:'1px solid var(--br)',display:'flex',gap:'8px',justifyContent:'flex-end'}});
+  if(!running&&!allDone){
+    var pending=items.filter(function(it){return it.status==='pending'&&it.turmaName.trim()}).length;
+    var missing=items.filter(function(it){return!it.turmaName.trim()}).length;
+    if(missing){
+      footer.appendChild(h('div',{style:{flex:'1',fontSize:'12px',color:'var(--am)',display:'flex',alignItems:'center'}},
+        '⚠️ '+missing+' arquivo(s) sem turma — preencha ou remova'));
+    } else {
+      footer.appendChild(h('div',{style:{flex:'1',fontSize:'12px',color:'var(--tx3)',display:'flex',alignItems:'center'}},
+        pending+' arquivo(s) prontos para importar'));
+    }
+    footer.appendChild(h('button',{'class':'btn btn-s',onclick:close},'Cancelar'));
+    footer.appendChild(h('button',{
+      'class':'btn btn-p',
+      disabled:!pending||missing>0,
+      onclick:function(){_runFichasBatch()}
+    },'🚀 Importar '+pending+' arquivo(s)'));
+  } else if(allDone){
+    footer.appendChild(h('button',{'class':'btn btn-p',onclick:function(){
+      // Stash a summary in S._docxResult so the Importações page shows it
+      var nOk=items.filter(function(it){return it.status==='ok'}).length;
+      var totalTeams=items.reduce(function(s,it){return s+(it.result?it.result.teams:0)},0);
+      var totalPlayers=items.reduce(function(s,it){return s+(it.result?it.result.players:0)},0);
+      var allWrn=[];
+      items.forEach(function(it){if(it.result&&it.result.wrn)it.result.wrn.forEach(function(w){allWrn.push(it.turmaName+': '+w)})});
+      S._docxResult={
+        msg:'✅ <b>Importação em lote concluída!</b><br>'+nOk+' arquivo(s) processado(s) · 📋 '+totalTeams+' equipe(s) · 👥 '+totalPlayers+' atleta(s)',
+        wrn:allWrn.slice(0,20)
+      };
+      S.mod=null;R();
+    }},'Fechar'));
+  } else {
+    footer.appendChild(h('div',{style:{fontSize:'12px',color:'var(--am)'}},'⏳ Processando — não feche esta janela...'));
+  }
+  md.appendChild(footer);
+
+  ov.appendChild(md);
+  c.appendChild(ov);
+}
+
+// Sequential processor: walks items, calls the right Auto function for each.
+function _runFichasBatch(){
+  if(!S.mod||S.mod.tp!=='fichasBatch')return;
+  S.mod.running=true;
+  R();
+  var items=S.mod.items;
+  var idx=0;
+  function next(){
+    while(idx<items.length&&(items[idx].status!=='pending'||!items[idx].turmaName.trim()))idx++;
+    if(idx>=items.length){
+      S.mod.running=false;
+      scheduleSave();
+      R();
+      return;
+    }
+    var it=items[idx];
+    var fn=it.ext==='docx'?impDocxAuto:impFichaXlsxAuto;
+    fn(it.file,it.turmaName).then(function(result){
+      it.status='ok';it.result=result;idx++;R();
+      // Yield to the browser between files so the UI updates
+      setTimeout(next,30);
+    }).catch(function(err){
+      it.status='error';it.error=(err&&err.message)||String(err);idx++;R();
+      setTimeout(next,30);
+    });
+  }
+  next();
+}
+
+// Promise-based DOCX import — accepts turmaName directly. Used for batch.
+function impDocxAuto(file,turmaName){
+  return new Promise(function(resolve,reject){
+    if(!file.name.endsWith('.docx')){reject(new Error('Arquivo deve ser .docx'));return}
+    var reader=new FileReader();
+    reader.onload=function(e){
+      var arrayBuffer=e.target.result;
+      function _doIt(){
+        try{
+          mammoth.convertToHtml({arrayBuffer:arrayBuffer}).then(function(mr){
+            try{
+              var result=parseDocxHtml(mr.value,turmaName,'');
+              resolve(result);
+            }catch(ex){reject(ex)}
+          }).catch(reject);
+        }catch(ex){reject(ex)}
+      }
+      if(typeof mammoth==='undefined'){
+        // Lazy-load mammoth from CDN
+        var script=document.createElement('script');
+        script.src='https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
+        script.onload=_doIt;
+        script.onerror=function(){reject(new Error('Não foi possível carregar mammoth.js'))};
+        document.head.appendChild(script);
+      } else {
+        _doIt();
+      }
+    };
+    reader.onerror=function(){reject(new Error('Erro ao ler arquivo'))};
+    reader.readAsArrayBuffer(file);
+  });
 }
 
 function impDocx(file){
   if(!file.name.endsWith('.docx')){alert('Arquivo deve ser .docx');return}
-  // Ask turma name only — year is inherited from event (S.bay).
+  // Try to detect turma name from filename first
+  var fromName=detectTurmaFromFilename(file.name);
+  if(fromName){
+    impDocxAuto(file,fromName).then(function(result){
+      S._docxResult={
+        msg:'✅ <b>Importação concluída!</b><br>📚 Turma: <b>'+fromName+'</b><br>⚽ '+result.sports+' esporte(s) criado(s)<br>📋 '+result.teams+' equipe(s) criada(s)<br>👥 '+result.players+' atleta(s) importado(s)',
+        wrn:result.wrn
+      };
+      R();
+    }).catch(function(e){alert('Erro: '+e.message)});
+    return;
+  }
+  // Detection failed — prompt user
   var turmaName=prompt('Qual o nome da turma?\n\nExemplo: 6º Ano E, 3º Ano A, etc.');
   if(!turmaName||!turmaName.trim()){alert('Nome da turma é obrigatório.');return}
   turmaName=turmaName.trim();
-  var turmaYear='';
-
-  var reader=new FileReader();
-  reader.onload=function(e){
-    var arrayBuffer=e.target.result;
-    // Use mammoth to convert to HTML, then parse tables
-    if(typeof mammoth==='undefined'){
-      // Fallback: parse the DOCX ZIP manually to find tables
-      parseDocxTables(arrayBuffer,turmaName,turmaYear.trim());
-    } else {
-      mammoth.convertToHtml({arrayBuffer:arrayBuffer}).then(function(result){
-        parseDocxHtml(result.value,turmaName,turmaYear.trim());
-      }).catch(function(err){
-        alert('Erro ao ler arquivo: '+err.message);
-      });
-    }
-  };
-  reader.readAsArrayBuffer(file);
+  impDocxAuto(file,turmaName).then(function(result){
+    S._docxResult={
+      msg:'✅ <b>Importação concluída!</b><br>📚 Turma: <b>'+turmaName+'</b><br>⚽ '+result.sports+' esporte(s) criado(s)<br>📋 '+result.teams+' equipe(s) criada(s)<br>👥 '+result.players+' atleta(s) importado(s)',
+      wrn:result.wrn
+    };
+    R();
+  }).catch(function(e){alert('Erro: '+e.message)});
 }
 
 // Parse DOCX tables from raw XML (no mammoth dependency)
@@ -4883,12 +5175,9 @@ function parseDocxHtml(html,turmaName,turmaYear){
   }
   
   logAudit('Importação DOCX','Turma "'+turmaName+'": '+result.sports+' esporte(s) criado(s), '+result.teams+' equipe(s), '+result.players+' jogador(es)');
-  
-  S._docxResult={
-    msg:'✅ <b>Importação concluída!</b><br>📚 Turma: <b>'+turmaName+'</b><br>⚽ '+result.sports+' esporte(s) criado(s)<br>📋 '+result.teams+' equipe(s) criada(s)<br>👥 '+result.players+' jogador(es) importado(s)',
-    wrn:result.wrn
-  };
-  R();
+  // Caller is responsible for setting S._docxResult and re-rendering.
+  result.turmaName=turmaName;
+  return result;
 }
 
 function modal(c,title,buildFn){
