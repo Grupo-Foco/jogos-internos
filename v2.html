@@ -1739,11 +1739,21 @@ function detectTurmaFromFilename(filename){
   var mSer=up.match(/(\d+)\s*[ªA°]?\s*S[ÉE]RIE/);
   if(mAno)serie=mAno[1]+'º ANO';
   else if(mSer)serie=mSer[1]+'ª SÉRIE';
-  var COLORS=['AMARELA','AMARELO','AZUL','VERDE','VERMELHA','VERMELHO','ROXO','ROXA','ROSA','PRETO','PRETA','BRANCO','BRANCA','CINZA','LARANJA'];
+  // Always normalize to the masculine form so it matches turmas created by
+  // the bracket import (which is what the school has loaded). ROXA/AMARELA/
+  // VERMELHA/PRETA/BRANCA → ROXO/AMARELO/VERMELHO/PRETO/BRANCO.
+  var COLOR_MAP={
+    'AMARELA':'AMARELO','AMARELO':'AMARELO',
+    'VERMELHA':'VERMELHO','VERMELHO':'VERMELHO',
+    'ROXA':'ROXO','ROXO':'ROXO',
+    'PRETA':'PRETO','PRETO':'PRETO',
+    'BRANCA':'BRANCO','BRANCO':'BRANCO',
+    'AZUL':'AZUL','VERDE':'VERDE','ROSA':'ROSA','CINZA':'CINZA','LARANJA':'LARANJA'
+  };
   var color=null;
-  for(var i=0;i<COLORS.length;i++){
-    if(up.indexOf(COLORS[i])>=0){color=COLORS[i];break;}
-  }
+  Object.keys(COLOR_MAP).forEach(function(c){
+    if(!color&&up.indexOf(c)>=0)color=COLOR_MAP[c];
+  });
   if(!color){
     var mLetter=up.match(/\b\d+\s*[ºO°]?\s*ANO\s+([A-H])\b/);
     if(mLetter)color=mLetter[1];
@@ -1897,6 +1907,12 @@ function consolidateYears(){
 
 function dedupeTurmas(){
   if(!S.cls||S.cls.length<2)return 0;
+  // Pre-pass: normalize all turma names to masculine color forms.
+  // After this, "3º ROXA" becomes "3º ROXO" and naturally collides with an
+  // existing "3º ROXO" turma, allowing the dedup grouping below to merge them.
+  S.cls.forEach(function(c){
+    if(c.nm)c.nm=_normColors((c.nm||'').toUpperCase());
+  });
   // Group by kex key — but only when the key is "useful" (>= 2 chars,
   // and starts with a digit so we don't merge generic single-word names)
   var groups={};
@@ -1919,6 +1935,9 @@ function dedupeTurmas(){
       return 0;
     });
     var keeper=g[0];
+    // Normalize keeper name to use the masculine color form (ROXO not ROXA,
+    // AMARELO not AMARELA, etc.) for consistency across the app.
+    keeper.nm=_normColors((keeper.nm||'').toUpperCase());
     // Prefer the more specific/explanatory name when lengths differ enough
     // (e.g. "6º Ano A" over "6A"). The sort above already favors longer names.
     for(var i=1;i<g.length;i++){
@@ -3136,8 +3155,25 @@ function pB(c){
     Object.keys(seenTids).forEach(function(tid){
       var cl=S.cls.find(function(c){return c.id===tid});
       if(!cl)return; // not a real class — probably stale id
-      // Find ficha-imported enrollment for this (turma, sport, gender) if exists
+      // Find ficha-imported enrollment for this (turma, sport, gender).
+      // Primary lookup: exact sport id + category match.
       var enr=S.enr.find(function(e){return e.ci===tid&&e.si===currentSpId&&e.ct===S.bc});
+      // Fallback: when there are duplicate sport entries (e.g. one from the
+      // bracket import and another created by ficha) the enrollment may point
+      // to a different sport id. Match by sport NAME + category instead, using
+      // accent-insensitive comparison.
+      if(!enr){
+        var sp=S.spt.find(function(s){return s.id===currentSpId});
+        if(sp){
+          function _norm(s){return(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
+          var spName=_norm(sp.nm);
+          enr=S.enr.find(function(e){
+            if(e.ci!==tid||e.ct!==S.bc)return false;
+            var espt=S.spt.find(function(x){return x.id===e.si});
+            return espt&&_norm(espt.nm)===spName;
+          });
+        }
+      }
       tms.push({
         id:enr?enr.id:tid,
         tn:enr?enr.tn:cl.nm,
@@ -6163,7 +6199,32 @@ function mSch(c){
 
 function nrm(s){return s.trim().replace(/[°°]/g,'º').replace(/\s+/g,' ').toUpperCase()}
 
-function kex(s){var n=nrm(s);var m=n.match(/(\d+)\s*[º\xba\xaa]?\s*(?:ANO|SERIE|S[EÉ]RIE)?\s*([A-Z])$/);if(m)return m[1]+m[2];return n.replace(/[^A-Z0-9]/g,'')}
+// Normalize a class identifier to a comparable key.
+// Two key normalizations:
+//   1. Feminine color forms become masculine — ROXA→ROXO, AMARELA→AMARELO,
+//      VERMELHA→VERMELHO, PRETA→PRETO, BRANCA→BRANCO. So "3º ROXO" and "3º ROXA"
+//      both become "3ROXO" and match each other.
+//   2. The "X°ANO" / "Xª SÉRIE" decoration is dropped, leaving just the
+//      digit + identifier suffix.
+function _normColors(s){
+  // Word-boundary replace, only at word edges so we don't touch "carROXAria" or similar
+  return s
+    .replace(/\bROXA\b/g,'ROXO')
+    .replace(/\bAMARELA\b/g,'AMARELO')
+    .replace(/\bVERMELHA\b/g,'VERMELHO')
+    .replace(/\bPRETA\b/g,'PRETO')
+    .replace(/\bBRANCA\b/g,'BRANCO');
+}
+function kex(s){
+  var n=_normColors(nrm(s));
+  // Last-letter shorthand (e.g. "3º A", "6º Ano B")
+  var m=n.match(/(\d+)\s*[º\xba\xaa]?\s*(?:ANO|SERIE|S[EÉ]RIE)?\s*([A-Z])$/);
+  if(m)return m[1]+m[2];
+  // General fallback: strip "ANO"/"SERIE" so "3 ANO ROXO" and "3º ROXO"
+  // both reduce to "3ROXO".
+  n=n.replace(/\bANO\b/g,'').replace(/\bSERIES?\b/g,'').replace(/\bS[EÉ]RIE\b/g,'');
+  return n.replace(/[^A-Z0-9]/g,'');
+}
 
 function findCls(nm){
   var byExact=S.cls.find(function(x){return nrm(x.nm)===nrm(nm)});
