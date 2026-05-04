@@ -1828,26 +1828,62 @@ function autoFixTeamNames(){
 // sport (e.g. "TENIS DE MESA" and "Tênis de mesa" with same gender, or
 // duplicates created across imports), keep one and migrate all references
 // (enrollments + bracket keys + podiums) to it. Returns count of merged sports.
+// Canonicalize a sport name to merge known synonyms.
+// Rules:
+//   FUT 7, FUTEBOL          → FUT 7
+//   VOLEI, VOLEIBOL, VOLLEY → VOLEI
+//   TENIS DE MESA, TENIS    → TENIS DE MESA
+//   SOLETRANDO ING/INGLES   → SOLETRANDO ING
+// All comparisons are accent/case-insensitive.
+function canonicalSportName(nm){
+  function _n(s){return(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
+  var n=_n(nm);
+  // Specific aliases — order matters: most specific first
+  if(/^fut\s*7\b/.test(n)||/^futebol\b/.test(n))return 'FUT 7';
+  if(/^volei\b|^voleibol\b|^volleyball\b|^volley\b|^voleiinino\b/.test(n))return 'VOLEI';
+  if(/^tenis(\s+de\s+mesa)?\b|^t[ée]nis(\s+de\s+mesa)?\b|^tenis\s*de\s*mesa\b/.test(n))return 'TENIS DE MESA';
+  if(/^soletrando(\s+ing)?(les)?\b/.test(n))return 'SOLETRANDO ING';
+  if(/^queimada\b/.test(n))return 'QUEIMADA';
+  if(/^pebolim\b/.test(n))return 'PEBOLIM';
+  if(/^handebol\b|^handball\b|^handibol\b/.test(n))return 'HANDEBOL';
+  if(/^basquete\b|^basket(ball)?\b/.test(n))return 'BASQUETE';
+  if(/^cesquete\b/.test(n))return 'CESQUETE';
+  if(/^bandeirinha\b/.test(n))return 'BANDEIRINHA';
+  if(/^xadrez\b|^chess\b/.test(n))return 'XADREZ';
+  if(/^minecraft\b/.test(n))return 'MINECRAFT';
+  // Default: uppercase trimmed
+  return (nm||'').toUpperCase().trim();
+}
+
 function dedupeSports(){
   if(!S.spt||S.spt.length<2)return 0;
-  function _norm(s){return(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
+  // Group by canonical name + gender. Two sports with different surface
+  // names (FUT 7 vs FUTEBOL) but same canonical form merge into one.
   var groups={};
   S.spt.forEach(function(sp){
-    var key=_norm(sp.nm)+'|'+(sp.gender||'');
+    var key=canonicalSportName(sp.nm)+'|'+(sp.gender||'');
     if(!groups[key])groups[key]=[];
     groups[key].push(sp);
   });
   var merged=0;
   Object.values(groups).forEach(function(g){
     if(g.length<2)return;
-    // Keep the one with most enrollments referencing it; tie-break by name length
+    // Keeper preference order:
+    //  1. Sport that appears in S.brk (bracket — source of truth)
+    //  2. Most enrollments referencing it
+    //  3. Tie-break by name length (longer wins for descriptiveness)
     g.sort(function(a,b){
+      var aInBrk=Object.keys(S.brk).some(function(bk){return bk.split('__')[1]===a.id})?1:0;
+      var bInBrk=Object.keys(S.brk).some(function(bk){return bk.split('__')[1]===b.id})?1:0;
+      if(aInBrk!==bInBrk)return bInBrk-aInBrk;
       var ea=S.enr.filter(function(e){return e.si===a.id}).length;
       var eb=S.enr.filter(function(e){return e.si===b.id}).length;
       if(ea!==eb)return eb-ea;
       return (b.nm||'').length-(a.nm||'').length;
     });
     var keeper=g[0];
+    // Force keeper.nm to the canonical form so the UI is consistent
+    keeper.nm=canonicalSportName(keeper.nm);
     for(var i=1;i<g.length;i++){
       var dup=g[i];
       // Migrate enrollments
@@ -1907,12 +1943,26 @@ function consolidateYears(){
 
 function dedupeTurmas(){
   if(!S.cls||S.cls.length<2)return 0;
-  // Pre-pass: normalize all turma names to masculine color forms.
-  // After this, "3º ROXA" becomes "3º ROXO" and naturally collides with an
-  // existing "3º ROXO" turma, allowing the dedup grouping below to merge them.
+  // Pre-pass 1: normalize all turma names to masculine color forms.
   S.cls.forEach(function(c){
     if(c.nm)c.nm=_normColors((c.nm||'').toUpperCase());
   });
+  // Pre-pass 2: drop the "ANO" word from names that include it when the
+  // dominant convention in the school is short-form ("6º A" not "6º ANO A").
+  // Decision rule: if at least 70% of turmas with the digit-at-start pattern
+  // use the short form, rewrite outliers.
+  (function(){
+    var withDigit=S.cls.filter(function(c){return /^\d/.test((c.nm||'').trim())});
+    if(withDigit.length<3)return;
+    var shortCount=withDigit.filter(function(c){return!/\bANO\b|\bSERIE\b|\bSÉRIE\b/i.test(c.nm)}).length;
+    if(shortCount/withDigit.length<0.7)return; // long form is dominant — leave alone
+    // Rewrite outliers: "6º ANO A" → "6º A"
+    S.cls.forEach(function(c){
+      var nm=c.nm||'';
+      var stripped=nm.replace(/\b(ANO|SÉRIE|SERIE)\b/gi,'').replace(/\s+/g,' ').trim();
+      if(stripped&&stripped!==nm)c.nm=stripped;
+    });
+  })();
   // Group by kex key — but only when the key is "useful" (>= 2 chars,
   // and starts with a digit so we don't merge generic single-word names)
   var groups={};
@@ -1925,21 +1975,20 @@ function dedupeTurmas(){
   var removedCount=0;
   Object.values(groups).forEach(function(g){
     if(g.length<2)return;
-    // Keep the "best" turma: one with most enrollments, then longest name, then a real yr
+    // Keeper preference order:
+    //  1. Most enrollments referencing it (data weight)
+    //  2. SHORTER name — matches the dominant convention in the school
+    //     (most turmas are "6º A", "6º B"... so "6º A" wins over "6º ANO A")
     g.sort(function(a,b){
       var ea=S.enr.filter(function(e){return e.ci===a.id}).length;
       var eb=S.enr.filter(function(e){return e.ci===b.id}).length;
       if(ea!==eb)return eb-ea;
-      var lenDiff=(b.nm||'').length-(a.nm||'').length;
-      if(lenDiff!==0)return lenDiff;
-      return 0;
+      // Shorter is better (avoids the rare "6º ANO A" winning over "6º A")
+      return (a.nm||'').length-(b.nm||'').length;
     });
     var keeper=g[0];
-    // Normalize keeper name to use the masculine color form (ROXO not ROXA,
-    // AMARELO not AMARELA, etc.) for consistency across the app.
+    // Normalize keeper name to use the masculine color form (ROXO not ROXA, etc.)
     keeper.nm=_normColors((keeper.nm||'').toUpperCase());
-    // Prefer the more specific/explanatory name when lengths differ enough
-    // (e.g. "6º Ano A" over "6A"). The sort above already favors longer names.
     for(var i=1;i<g.length;i++){
       var dup=g[i];
       // Migrate all references
@@ -4735,24 +4784,28 @@ function parseFichaXlsxRows(rows,turmaName,turmaYear){
 
   function saveSportTeam(sportInfo,players,turma,result){
     if(!sportInfo||!sportInfo.name)return;
-    // Normalize for comparison: strip accents + lowercase. This way
-    // "Tênis de mesa" matches "TENIS DE MESA" from the bracket import.
+    // Use canonical name to merge synonyms: FUTEBOL→FUT 7, VOLEIBOL→VOLEI, etc.
+    // Comparison is also accent-insensitive so "Tênis de mesa" matches
+    // "TENIS DE MESA" already in S.spt.
+    var canonical=canonicalSportName(sportInfo.name);
     function _norm(s){return(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
-    var nameLow=_norm(sportInfo.name);
-    // First: try exact match name+gender
+    var canonLow=_norm(canonical);
+    // Find existing sport by canonical name + gender (preferred)
     var sport=S.spt.find(function(s){
-      return _norm(s.nm)===nameLow&&(s.gender||'')===sportInfo.category;
+      return _norm(canonicalSportName(s.nm))===canonLow&&(s.gender||'')===sportInfo.category;
     });
-    // Fallback: name + Misto (when bracket sport has no per-gender split)
+    // Fallback: same canonical name + Misto (or no gender)
     if(!sport)sport=S.spt.find(function(s){
-      return _norm(s.nm)===nameLow&&(!s.gender||s.gender==='Misto');
+      return _norm(canonicalSportName(s.nm))===canonLow&&(!s.gender||s.gender==='Misto');
     });
-    // Last fallback: name only (for sports without gender info — older data)
-    if(!sport)sport=S.spt.find(function(s){return _norm(s.nm)===nameLow&&!s.gender});
+    // Last fallback: same canonical name regardless of gender
+    if(!sport)sport=S.spt.find(function(s){
+      return _norm(canonicalSportName(s.nm))===canonLow&&!s.gender;
+    });
     if(!sport){
-      // No matching sport — create a new one tagged with the right gender so
-      // future enrollments don't drift.
-      sport={id:uid(),nm:uc(sportInfo.name),gender:sportInfo.category,mn:1,mx:30,ct:[sportInfo.category],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
+      // No matching sport — create with canonical name (so future imports
+      // from other ficha files alias correctly).
+      sport={id:uid(),nm:canonical,gender:sportInfo.category,mn:1,mx:30,ct:[sportInfo.category],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
       S.spt.push(sport);result.sports++;
     }
     if(sport.ct.indexOf(sportInfo.category)<0)sport.ct.push(sportInfo.category);
@@ -5155,21 +5208,22 @@ function parseDocxHtml(html,turmaName,turmaYear){
   });
   
   function saveSportTeam(sportInfo,players,turma,result){
-    // Find sport by name AND gender (bracket imports may have created
-    // separate entries for masc/fem of the same sport — see XLSX parser
-    // for full explanation). Names are compared accent-insensitively so
-    // "Tênis" and "TENIS" merge into one entry.
+    // Use canonical name to merge synonyms (FUTEBOL→FUT 7, VOLEIBOL→VOLEI, etc.)
+    // and accent-insensitive comparison.
+    var canonical=canonicalSportName(sportInfo.name);
     function _norm(s){return(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
-    var nameLow=_norm(sportInfo.name);
+    var canonLow=_norm(canonical);
     var sport=S.spt.find(function(s){
-      return _norm(s.nm)===nameLow&&(s.gender||'')===sportInfo.category;
+      return _norm(canonicalSportName(s.nm))===canonLow&&(s.gender||'')===sportInfo.category;
     });
     if(!sport)sport=S.spt.find(function(s){
-      return _norm(s.nm)===nameLow&&(!s.gender||s.gender==='Misto');
+      return _norm(canonicalSportName(s.nm))===canonLow&&(!s.gender||s.gender==='Misto');
     });
-    if(!sport)sport=S.spt.find(function(s){return _norm(s.nm)===nameLow&&!s.gender});
+    if(!sport)sport=S.spt.find(function(s){
+      return _norm(canonicalSportName(s.nm))===canonLow&&!s.gender;
+    });
     if(!sport){
-      sport={id:uid(),nm:uc(sportInfo.name),gender:sportInfo.category,mn:2,mx:20,ct:[sportInfo.category],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
+      sport={id:uid(),nm:canonical,gender:sportInfo.category,mn:2,mx:20,ct:[sportInfo.category],dur:14,tiebreakers:['goalDiff','yellowCards','redCards']};
       S.spt.push(sport);
       result.sports++;
     }
