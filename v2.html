@@ -1513,6 +1513,28 @@ function mCleanSchool(root){
         d.podiums=[];
       } else if(action==='clearLocais'){
         d.locs=[];
+      } else if(action==='consolidate'){
+        // Apply the same dedupe pipeline that runs on boot, but force it on
+        // raw `d` (which is the school's full data fetched from Supabase).
+        // Temporarily swap S.* to operate, then swap back.
+        var _save={cls:S.cls,spt:S.spt,enr:S.enr,brk:S.brk,podiums:S.podiums,recursos:S.recursos};
+        S.cls=d.cls||[]; S.spt=d.spt||[]; S.enr=d.enr||[];
+        S.brk=d.brk||{}; S.podiums=d.podiums||[]; S.recursos=d.recursos||[];
+        var report=[];
+        try{
+          var n1=autoFixTeamNames();          if(n1>0)report.push(n1+' nomes corrigidos');
+          var n2=consolidateYears();          if(n2>0)report.push(n2+' anos consolidados');
+          var n3=dedupeSports();              if(n3>0)report.push(n3+' esportes fundidos');
+          var n4=dedupeTurmas();              if(n4>0)report.push(n4+' turmas fundidas');
+          var n5=dedupeEnrollments();         if(n5>0)report.push(n5+' inscrições deduplicadas');
+        }catch(e){console.error('Consolidate error:',e)}
+        // Write back
+        d.cls=S.cls; d.spt=S.spt; d.enr=S.enr; d.brk=S.brk; d.podiums=S.podiums; d.recursos=S.recursos;
+        // Restore S.* (since we're in master context, not the school context)
+        S.cls=_save.cls; S.spt=_save.spt; S.enr=_save.enr;
+        S.brk=_save.brk; S.podiums=_save.podiums; S.recursos=_save.recursos;
+        // Stash the report so the success message can show it
+        window.__consolidateReport=report.length?report.join(', '):'nenhuma duplicata encontrada';
       }
 
       // Write back
@@ -1525,7 +1547,12 @@ function mCleanSchool(root){
           if(statusEl){
             statusEl.style.background='rgba(52,211,153,.08)';
             statusEl.style.borderColor='rgba(52,211,153,.3)';
-            statusEl.innerHTML='✅ <b>'+label+' concluído!</b><br><br>'
+            var extra='';
+            if(action==='consolidate'&&window.__consolidateReport){
+              extra='<div style="margin-top:6px;font-size:11px;color:var(--gn)">'+window.__consolidateReport+'</div>';
+              window.__consolidateReport=null;
+            }
+            statusEl.innerHTML='✅ <b>'+label+' concluído!</b>'+extra+'<br><br>'
               +'<span style="color:var(--am);font-size:11px">⚠️ Importante: se a aba de admin desta escola estiver aberta em outra janela, FECHE-A AGORA antes de fazer qualquer ação. Caso contrário, os dados em memória serão regravados no Supabase, desfazendo a limpeza.</span>';
           }
           setTimeout(function(){MT.mod=null;renderMasterPanel()},5000);
@@ -1590,6 +1617,15 @@ function mCleanSchool(root){
     'Apaga todos os locais cadastrados. Não afeta confrontos já agendados.',
     'var(--am)','rgba(251,191,36,.06)','clearLocais',
     'Todos os locais cadastrados serão apagados. Os jogos com local atribuído manterão a referência por nome.'
+  ));
+
+  body.appendChild(h('div',{style:{height:'1px',background:'var(--br)',margin:'14px 0'}}));
+
+  body.appendChild(btn(
+    '🧹 Consolidar duplicatas (esportes, turmas, inscrições)',
+    'Funde sinônimos automaticamente: FUTEBOL/FUT 7, VOLEI/VOLEIBOL, TENIS/TENIS DE MESA, ROXO/ROXA, AMARELO/AMARELA, etc. Migra inscrições para os ids corretos. Use depois de importar fichas se aparecerem entradas duplicadas.',
+    'var(--cy)','rgba(34,211,238,.06)','consolidate',
+    'Esta operação MANTÉM todos os dados — apenas funde duplicatas. Inscrições e atletas são preservados (somam quando se fundem). Recomendado executar antes de qualquer competição começar.'
   ));
 
   body.appendChild(h('div',{style:{height:'1px',background:'var(--br)',margin:'14px 0'}}));
@@ -8224,6 +8260,9 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
     MT.dataLoaded=true; // Flag: data has been loaded, safe to save
     // Auto-fix team names to standardized format
     if(ok){
+      console.log('=== CLEANUP DIAGNOSTICS ===');
+      console.log('Loaded state: '+S.cls.length+' turmas, '+S.spt.length+' sports, '+S.enr.length+' enrollments, '+Object.keys(S.brk).length+' brackets');
+      console.log('Sport names:', S.spt.map(function(s){return s.nm+'/'+(s.gender||'-')}).join(' | '));
       // Normalize all data to uppercase
       S.cls.forEach(function(c){c.nm=uc(c.nm);c.yr=uc(c.yr)});
       S.spt.forEach(function(s){s.nm=uc(s.nm)});
@@ -8243,10 +8282,14 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
       // We only save when something actually changed to avoid noise.
       var anyChange=nFixed||nYrs||nMergedS||nMergedT||nDeduped;
       if(anyChange){
-        console.log('Persisting cleanup results to Supabase...');
-        // dataLoaded must be true so scheduleSave passes its safety guard
+        console.log('Persisting cleanup results to Supabase ('+
+          'nFixed='+nFixed+' nYrs='+nYrs+' nMergedS='+nMergedS+' nMergedT='+nMergedT+' nDeduped='+nDeduped+')...');
+        // Sync immediately (not via debounced scheduleSave) so the cleanup
+        // is durable even if the user closes the tab right after load.
         MT.dataLoaded=true;
-        scheduleSave();
+        try{syncToSupabase(false);}catch(e){console.error('Cleanup save failed:',e)}
+      } else {
+        console.log('Cleanup: nothing to dedupe.');
       }
       // Recompute group winners for all imported brackets (propagate GW_ slots)
       try{
