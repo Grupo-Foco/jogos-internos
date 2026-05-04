@@ -8238,6 +8238,16 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
       if(nMergedT>0)console.log('dedupeTurmas: merged '+nMergedT+' duplicate turma(s)');
       var nDeduped=dedupeEnrollments();
       if(nDeduped>0)console.log('dedupeEnrollments: removed '+nDeduped+' duplicate enrollment(s)');
+      // PERSIST cleanup results to Supabase. Without this, the dedup runs on every
+      // page load but never sticks — the dirty data comes back fresh next time.
+      // We only save when something actually changed to avoid noise.
+      var anyChange=nFixed||nYrs||nMergedS||nMergedT||nDeduped;
+      if(anyChange){
+        console.log('Persisting cleanup results to Supabase...');
+        // dataLoaded must be true so scheduleSave passes its safety guard
+        MT.dataLoaded=true;
+        scheduleSave();
+      }
       // Recompute group winners for all imported brackets (propagate GW_ slots)
       try{
         Object.entries(S.brk).forEach(function(bke){
