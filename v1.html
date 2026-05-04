@@ -4506,28 +4506,46 @@ function parseFichaXlsxRows(rows,turmaName,turmaYear){
   // overriding with the user-typed "6º Ano" would split the schedule across
   // two virtual years and create duplicate filter tabs in Chaveamento/Inscrições.
 
-  var sportKeywords=['FUTEBOL','FUTSAL','HANDEBOL','HANDBALL','VÔLEI','VOLEI','VOLEIBOL','QUEIMADA','BASQUETE','BANDEIRINHA','XADREZ','PEBOLIM','FUTMESA','TENIS DE MESA','TÊNIS DE MESA','TENIS','TÊNIS','PING PONG','ATLETISMO','NATAÇÃO','NATACAO','CUBO','SOLETRANDO','MINECRAFT','ARTES','CONHECIMENTOS','DAMAS','REVEZAMENTO','50M','100M','PROVA'];
+  var sportKeywords=['FUTEBOL','FUTSAL','HANDEBOL','HANDBALL','VÔLEI','VOLEI','VOLEIBOL','QUEIMADA','BASQUETE','BANDEIRINHA','XADREZ','PEBOLIM','FUTMESA','TENIS DE MESA','TÊNIS DE MESA','TENIS','TÊNIS','PING PONG','ATLETISMO','NATAÇÃO','NATACAO','CUBO','SOLETRANDO','MINECRAFT','ARTES','CONHECIMENTOS','DAMAS','REVEZAMENTO','50M','100M','PROVA','CESQUETE','QUEBRA-CABE','QUEBRA CABE','BALEADO','TACO','POLITICOS','POLÍTICOS','SLAM','BEISEBOL','BASEBALL'];
 
   function isSportHeader(text){
     if(!text)return false;
     var up=text.toString().toUpperCase().trim();
-    if(up.length<3||up.length>40)return false;
+    if(up.length<3||up.length>120)return false;
     return sportKeywords.some(function(k){return up.indexOf(k)>=0});
+  }
+  // When a single cell holds multiple concatenated headers (common in fichas
+  // with merged cells: "BANDEIRINHA (M)        BANDEIRINHA(F)") we need to
+  // split it so each becomes its own sport+gender. Returns array of headers
+  // found in the cell; ['the full text'] if it looks like a single header.
+  function splitMultiHeader(text){
+    if(!text)return[];
+    var s=text.toString();
+    // Heuristic: split on runs of 5+ spaces — an actual sport name doesn't
+    // contain that much whitespace, but two side-by-side headers in a merged
+    // cell will. After split, we only keep parts that themselves look like
+    // sport headers.
+    var parts=s.split(/\s{5,}/).map(function(p){return p.trim()}).filter(function(p){return p.length>0});
+    if(parts.length<2)return[s.trim()];
+    var headers=parts.filter(isSportHeader);
+    return headers.length?headers:[s.trim()];
   }
   function parseSportName(text){
     var clean=text.toString().replace(/\*+/g,'').trim();
     var cat='Misto';
     var up=clean.toUpperCase();
-    // Detect category by parenthetical or suffix: (FEMININO), (MASCULINO), (FEM.), (MASC.), (LIVRE)
-    if(/\bFEM(ININO)?\b|\bFEM\.?\)?$/i.test(up)||/\(FEM/i.test(up))cat='Feminino';
-    else if(/\bMASC(ULINO)?\b|\bMASC\.?\)?$/i.test(up)||/\(MASC/i.test(up))cat='Masculino';
-    else if(/\bMISTO\b|\(MISTO\)/i.test(up))cat='Misto';
-    else if(/\bLIVRE\b/i.test(up))cat='Misto';
-    // Strip category words from name
+    // Detect category by parenthetical or suffix. Includes single-letter forms:
+    // (F) and (M) common in concise fichas. Order matters — check more specific
+    // forms first.
+    if(/\((\s*F(EM(ININO)?)?\.?\s*)\)|\bFEM(ININO)?\b|\bFEM\.?\)?$/i.test(up))cat='Feminino';
+    else if(/\((\s*M(ASC(ULINO)?)?\.?\s*)\)|\bMASC(ULINO)?\b|\bMASC\.?\)?$/i.test(up))cat='Masculino';
+    else if(/\bMISTO\b|\(MISTO\)|\(\s*X\s*\)/i.test(up))cat='Misto';
+    else if(/\bLIVRE\b|\(LIVRE\)/i.test(up))cat='Misto';
+    // Strip category words and abbreviated markers from name
     var sportName=clean
-      .replace(/\(\s*(FEM\.?|MASC\.?|FEMININO|MASCULINO|MISTO|LIVRE)\s*\)/gi,'')
+      .replace(/\(\s*(FEM\.?|MASC\.?|FEMININO|MASCULINO|MISTO|LIVRE|F|M|X)\s*\)/gi,'')
       .replace(/\s+(FEM\.?|MASC\.?|FEMININO|MASCULINO|MISTO|LIVRE)\b/gi,'')
-      .replace(/[\.\s]+$/,'').trim();
+      .replace(/[\.\s]+$/,'').replace(/\s+/g,' ').trim();
     return{name:sportName,category:cat};
   }
   function isPlayerName(text){
@@ -4568,10 +4586,26 @@ function parseFichaXlsxRows(rows,turmaName,turmaYear){
       var v=row[ci];
       if(v==null||v==='')continue;
       // Skip cells that are merge-cell slaves (copies, not originals).
-      // Their content was already processed in the origin column.
       if(rowMerged[ci])continue;
       var s=v.toString().trim();
       if(!s)continue;
+      // A single cell may hold multiple sport headers concatenated by wide
+      // whitespace gaps (e.g. when the user authored a merged cell containing
+      // both "BANDEIRINHA (M)" and "BANDEIRINHA(F)"). We split and process
+      // each header in the next available column.
+      var multi=isSportHeader(s)?splitMultiHeader(s):null;
+      if(multi&&multi.length>1){
+        // Distribute headers across this column and the immediately following
+        // empty (or merged-slave) columns of the same row, so they each get
+        // their own sport state.
+        for(var mi=0;mi<multi.length;mi++){
+          var targetCol=ci+mi;
+          if(targetCol>=maxCols)break;
+          flushCol(targetCol);
+          colState[targetCol].sport=parseSportName(multi[mi]);
+        }
+        continue;
+      }
       if(isSportHeader(s)){
         // Flush previous sport in this column, start new
         flushCol(ci);
@@ -4723,7 +4757,7 @@ function parseDocxHtml(html,turmaName,turmaYear){
   // would split the school's data across two virtual years.
   
   // Known sport keywords to detect headers
-  var sportKeywords=['FUTEBOL','FUTSAL','HANDEBOL','HANDBALL','VÔLEI','VOLEI','VOLEIBOL','QUEIMADA','BASQUETE','BANDEIRINHA','XADREZ','PEBOLIM','FUTMESA','ATLETISMO','NATAÇÃO','NATACAO','TÊNIS','TENIS','CUBO','SOLETRANDO','MINECRAFT','ARTES','CONHECIMENTOS'];
+  var sportKeywords=['FUTEBOL','FUTSAL','HANDEBOL','HANDBALL','VÔLEI','VOLEI','VOLEIBOL','QUEIMADA','BASQUETE','BANDEIRINHA','XADREZ','PEBOLIM','FUTMESA','TENIS DE MESA','TÊNIS DE MESA','TENIS','TÊNIS','PING PONG','ATLETISMO','NATAÇÃO','NATACAO','CUBO','SOLETRANDO','MINECRAFT','ARTES','CONHECIMENTOS','DAMAS','REVEZAMENTO','50M','100M','PROVA','CESQUETE','QUEBRA-CABE','QUEBRA CABE','BALEADO','TACO'];
   
   function isSportHeader(text){
     if(!text)return false;
@@ -4733,16 +4767,18 @@ function parseDocxHtml(html,turmaName,turmaYear){
   
   function parseSportName(text){
     var clean=text.replace(/\*+/g,'').trim();
-    // Detect category from name
     var cat='Misto';
     var up=clean.toUpperCase();
-    if(up.indexOf('FEM')>=0)cat='Feminino';
-    else if(up.indexOf('MASC')>=0)cat='Masculino';
-    else if(up.indexOf('MISTO')>=0)cat='Misto';
-    // Clean sport name (remove FEM/MASC/MISTO suffix)
-    var sportName=clean.replace(/\s*(FEM\.?|MASC\.?|FEMININO|MASCULINO|MISTO)\s*/gi,'').trim();
-    // Remove trailing dots and spaces
-    sportName=sportName.replace(/[\.\s]+$/,'').trim();
+    // Same detection used in XLSX parser — includes abbreviated (F)/(M) forms
+    if(/\((\s*F(EM(ININO)?)?\.?\s*)\)|\bFEM(ININO)?\b|\bFEM\.?\)?$/i.test(up))cat='Feminino';
+    else if(/\((\s*M(ASC(ULINO)?)?\.?\s*)\)|\bMASC(ULINO)?\b|\bMASC\.?\)?$/i.test(up))cat='Masculino';
+    else if(/\bMISTO\b|\(MISTO\)|\(\s*X\s*\)/i.test(up))cat='Misto';
+    else if(/\bLIVRE\b|\(LIVRE\)/i.test(up))cat='Misto';
+    // Strip category markers from sport name
+    var sportName=clean
+      .replace(/\(\s*(FEM\.?|MASC\.?|FEMININO|MASCULINO|MISTO|LIVRE|F|M|X)\s*\)/gi,'')
+      .replace(/\s+(FEM\.?|MASC\.?|FEMININO|MASCULINO|MISTO|LIVRE)\b/gi,'')
+      .replace(/[\.\s]+$/,'').replace(/\s+/g,' ').trim();
     return{name:sportName,category:cat};
   }
   
