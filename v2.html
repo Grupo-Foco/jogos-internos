@@ -1622,15 +1622,6 @@ function mCleanSchool(root){
   body.appendChild(h('div',{style:{height:'1px',background:'var(--br)',margin:'14px 0'}}));
 
   body.appendChild(btn(
-    '🧹 Consolidar duplicatas (esportes, turmas, inscrições)',
-    'Funde sinônimos automaticamente: FUTEBOL/FUT 7, VOLEI/VOLEIBOL, TENIS/TENIS DE MESA, ROXO/ROXA, AMARELO/AMARELA, etc. Migra inscrições para os ids corretos. Use depois de importar fichas se aparecerem entradas duplicadas.',
-    'var(--cy)','rgba(34,211,238,.06)','consolidate',
-    'Esta operação MANTÉM todos os dados — apenas funde duplicatas. Inscrições e atletas são preservados (somam quando se fundem). Recomendado executar antes de qualquer competição começar.'
-  ));
-
-  body.appendChild(h('div',{style:{height:'1px',background:'var(--br)',margin:'14px 0'}}));
-
-  body.appendChild(btn(
     '💥 Limpar TUDO (turmas, esportes, locais, chaveamento, resultados)',
     'Zera completamente os dados de competição. Preserva apenas o cadastro da escola (nome, senha admin, logins, configurações e auditoria).',
     'var(--rd)','rgba(239,68,68,.06)','clearAll',
@@ -8258,39 +8249,40 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
   loadFromSupabase(function(ok){
     MT.loading=false;
     MT.dataLoaded=true; // Flag: data has been loaded, safe to save
-    // Auto-fix team names to standardized format
     if(ok){
-      console.log('=== CLEANUP DIAGNOSTICS ===');
-      console.log('Loaded state: '+S.cls.length+' turmas, '+S.spt.length+' sports, '+S.enr.length+' enrollments, '+Object.keys(S.brk).length+' brackets');
+      console.log('=== STATE LOADED ===');
+      console.log('Loaded: '+S.cls.length+' turmas, '+S.spt.length+' sports, '+S.enr.length+' enrollments, '+Object.keys(S.brk).length+' brackets');
       console.log('Sport names:', S.spt.map(function(s){return s.nm+'/'+(s.gender||'-')}).join(' | '));
-      // Normalize all data to uppercase
+      // Normalize all data to uppercase (visual only — non-destructive)
       S.cls.forEach(function(c){c.nm=uc(c.nm);c.yr=uc(c.yr)});
       S.spt.forEach(function(s){s.nm=uc(s.nm)});
       S.enr.forEach(function(e){e.tn=uc(e.tn)});
-      var nFixed=autoFixTeamNames();
-      if(nFixed>0)console.log('autoFixTeamNames: corrected '+nFixed+' team name(s)');
-      var nYrs=consolidateYears();
-      if(nYrs>0)console.log('consolidateYears: rewrote yr on '+nYrs+' turma(s) to single event year');
-      var nMergedS=dedupeSports();
-      if(nMergedS>0)console.log('dedupeSports: merged '+nMergedS+' duplicate sport(s)');
-      var nMergedT=dedupeTurmas();
-      if(nMergedT>0)console.log('dedupeTurmas: merged '+nMergedT+' duplicate turma(s)');
-      var nDeduped=dedupeEnrollments();
-      if(nDeduped>0)console.log('dedupeEnrollments: removed '+nDeduped+' duplicate enrollment(s)');
-      // PERSIST cleanup results to Supabase. Without this, the dedup runs on every
-      // page load but never sticks — the dirty data comes back fresh next time.
-      // We only save when something actually changed to avoid noise.
-      var anyChange=nFixed||nYrs||nMergedS||nMergedT||nDeduped;
-      if(anyChange){
-        console.log('Persisting cleanup results to Supabase ('+
-          'nFixed='+nFixed+' nYrs='+nYrs+' nMergedS='+nMergedS+' nMergedT='+nMergedT+' nDeduped='+nDeduped+')...');
-        // Sync immediately (not via debounced scheduleSave) so the cleanup
-        // is durable even if the user closes the tab right after load.
-        MT.dataLoaded=true;
-        try{syncToSupabase(false);}catch(e){console.error('Cleanup save failed:',e)}
-      } else {
-        console.log('Cleanup: nothing to dedupe.');
-      }
+      // Auto-cleanup intentionally DISABLED. Earlier attempts to run dedupes
+      // automatically on boot caused issues in production (sports with
+      // mangled names like "ATLETISMO (ULINO)" or "CUBO MÁGICO ()" plus
+      // empty-gender entries confused the grouping). Cleanup now runs ONLY
+      // when manually triggered via the console (window.runCleanup()).
+      // The functions still exist (autoFixTeamNames, dedupeSports,
+      // dedupeTurmas, dedupeEnrollments, consolidateYears) and can be
+      // invoked surgically from devtools.
+      window.runCleanup=function(opts){
+        opts=opts||{};
+        console.log('Manual cleanup run with opts:',opts);
+        var report={};
+        if(opts.fixNames!==false){report.fixNames=autoFixTeamNames()}
+        if(opts.years){report.years=consolidateYears()}
+        if(opts.sports){report.sports=dedupeSports()}
+        if(opts.turmas){report.turmas=dedupeTurmas()}
+        if(opts.enrollments){report.enrollments=dedupeEnrollments()}
+        console.log('Report:',report);
+        if(opts.save){
+          console.log('Persisting...');
+          try{syncToSupabase(false)}catch(e){console.error('Save failed:',e)}
+        } else {
+          console.log('Run with {save:true} to persist. State changed in memory only.');
+        }
+        return report;
+      };
       // Recompute group winners for all imported brackets (propagate GW_ slots)
       try{
         Object.entries(S.brk).forEach(function(bke){
