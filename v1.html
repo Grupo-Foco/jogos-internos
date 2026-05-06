@@ -825,14 +825,34 @@ function parseJimHtmlForBrackets(htmlText){
   var rawMatch=htmlText.match(/const RAW\s*=\s*(\[[\s\S]*?\]);/);
   if(!rawMatch)return null;var raw;try{raw=JSON.parse(rawMatch[1])}catch(e){return null}
   if(!Array.isArray(raw)||!raw.length)return null;
-  // RAW row layout (from JIM dashboard export): typically
-  //   [id, data, hora, local, modal, fase, ?, e1, e2, ?, serie]
-  // r[1] is commonly the date — we capture it if present and shaped like
-  // a date string ("DD/MM" or "DD/MM/YYYY"). Fallback: empty string.
-  function _isDateLike(v){return v&&/^\d{1,2}\/\d{1,2}(\/\d{2,4})?$/.test(String(v).trim())}
+  // RAW row layout (from JIM dashboard export):
+  //   [id, dia, hora, local, modal, ?, ?, e1, e2, gender, serie, cor1, cor2]
+  //
+  // The JIM dashboard stores only the DAY of the month in r[1] (the
+  // competition runs entirely in one month, so the dashboard omits it).
+  // We need to combine that day with a month to produce a proper "DD/MM"
+  // display string. Asks the user once via prompt.
+  var hasDays=raw.some(function(r){var v=r[1];return v!=null&&!isNaN(parseInt(v,10))});
+  var eventMonth='';
+  if(hasDays){
+    var input=prompt('Em qual MÊS acontecem os jogos? (1-12)\n\nO dashboard JIM informa apenas o dia. Digite o número do mês para gerar a data completa (ex.: 5 para maio). Deixe em branco para mostrar só o dia.','5');
+    if(input&&input.trim()){
+      var mn=parseInt(input,10);
+      if(!isNaN(mn)&&mn>=1&&mn<=12)eventMonth=mn<10?'0'+mn:''+mn;
+    }
+  }
+  function _formatDay(v){
+    if(v==null)return '';
+    var s=String(v).trim();
+    // Already formatted? pass through
+    if(/^\d{1,2}\/\d{1,2}(\/\d{2,4})?$/.test(s))return s;
+    var n=parseInt(s,10);
+    if(isNaN(n)||n<1||n>31)return '';
+    var dd=n<10?'0'+n:''+n;
+    return eventMonth?dd+'/'+eventMonth:'Dia '+n;
+  }
   return _buildJimRows(raw.map(function(r){
-    var d=_isDateLike(r[1])?String(r[1]).trim():'';
-    return{hora:r[2],local:r[3],modal:r[4],fase:r[5],e1:r[7],e2:r[8],serie:r[10]||'',data:d};
+    return{hora:r[2],local:r[3],modal:r[4],fase:r[5],e1:r[7],e2:r[8],serie:r[10]||'',data:_formatDay(r[1])};
   }));
 }
 function _buildJimRows(rows){
