@@ -802,19 +802,22 @@ function parseJimXlsx(wb){
   if(parts[1]){var m2=parts[1].match(/(\d+)/);if(m2)endRow=parseInt(m2[1])}
   var headers={};
   'ABCDEFGHIJK'.split('').forEach(function(col){var cell=ts[col+'1'];if(cell){headers[col]=cvCell(cell).toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim()}});
-  var cm={hora:'D',local:'E',serie:'F',modal:'G',fase:'H',e1:'I',e2:'K'};
+  var cm={hora:'D',local:'E',serie:'F',modal:'G',fase:'H',e1:'I',e2:'K',data:''};
   Object.entries(headers).forEach(function(e){var c=e[0],h2=e[1];
     if(h2.indexOf('HOR')>=0)cm.hora=c;
     if(h2.indexOf('LOCAL')>=0)cm.local=c;
     if(h2.indexOf('MODAL')>=0)cm.modal=c;
     if(h2.indexOf('SERIE')>=0||h2.indexOf('TURMA')>=0)cm.serie=c;
     if(h2.indexOf('FASE')>=0)cm.fase=c;
+    // Optional date column. Headers seen in real JIM exports: "DATA", "DIA",
+    // "DATA DO JOGO". Stored as `data` and propagated to bracket._data later.
+    if(h2.indexOf('DATA')>=0||h2==='DIA')cm.data=c;
     if(h2.indexOf('EQUIPE')>=0&&!cm._e1s){cm.e1=c;cm._e1s=true}
     else if(h2.indexOf('EQUIPE')>=0){cm.e2=c}
   });
-  function cv(col,row){var c=ts[col+row];return c?(c.v||'').toString().trim():''}
+  function cv(col,row){if(!col)return '';var c=ts[col+row];return c?(c.v||'').toString().trim():''}
   var rows=[];
-  for(var r=2;r<=endRow;r++){var modal=cv(cm.modal,r);if(!modal)continue;var e1=cv(cm.e1,r),e2=cv(cm.e2,r);rows.push({hora:cv(cm.hora,r),local:cv(cm.local,r),modal:modal,fase:cv(cm.fase,r),e1:e1,e2:e2,serie:cv(cm.serie,r)})}
+  for(var r=2;r<=endRow;r++){var modal=cv(cm.modal,r);if(!modal)continue;var e1=cv(cm.e1,r),e2=cv(cm.e2,r);rows.push({hora:cv(cm.hora,r),local:cv(cm.local,r),modal:modal,fase:cv(cm.fase,r),e1:e1,e2:e2,serie:cv(cm.serie,r),data:cv(cm.data,r)})}
   if(!rows.length)return null;
   return _buildJimRows(rows);
 }
@@ -822,7 +825,15 @@ function parseJimHtmlForBrackets(htmlText){
   var rawMatch=htmlText.match(/const RAW\s*=\s*(\[[\s\S]*?\]);/);
   if(!rawMatch)return null;var raw;try{raw=JSON.parse(rawMatch[1])}catch(e){return null}
   if(!Array.isArray(raw)||!raw.length)return null;
-  return _buildJimRows(raw.map(function(r){return{hora:r[2],local:r[3],modal:r[4],fase:r[5],e1:r[7],e2:r[8],serie:r[10]||''}}));
+  // RAW row layout (from JIM dashboard export): typically
+  //   [id, data, hora, local, modal, fase, ?, e1, e2, ?, serie]
+  // r[1] is commonly the date — we capture it if present and shaped like
+  // a date string ("DD/MM" or "DD/MM/YYYY"). Fallback: empty string.
+  function _isDateLike(v){return v&&/^\d{1,2}\/\d{1,2}(\/\d{2,4})?$/.test(String(v).trim())}
+  return _buildJimRows(raw.map(function(r){
+    var d=_isDateLike(r[1])?String(r[1]).trim():'';
+    return{hora:r[2],local:r[3],modal:r[4],fase:r[5],e1:r[7],e2:r[8],serie:r[10]||'',data:d};
+  }));
 }
 function _buildJimRows(rows){
   function u(){return Math.random().toString(36).slice(2,9)}
@@ -879,7 +890,7 @@ function _buildJimRows(rows){
     var isGroupA=(fase==='GRUPO A');
     var isGroupB=(fase==='GRUPO B');
 
-    var match={hora:r.hora,local:r.local,e1:(r.e1||'').trim(),e2:(r.e2||'').trim(),fase:fase};
+    var match={hora:r.hora,local:r.local,data:r.data||'',e1:(r.e1||'').trim(),e2:(r.e2||'').trim(),fase:fase};
 
     if(is3rd){grp.thirdMatches.push(match);}
     else if(isSemi){grp.semiMatches.push(match);}
@@ -2762,7 +2773,6 @@ function R(){
   if(S.mod&&S.mod.tp==='settings')mSettings(root);
   if(S.mod&&S.mod.tp==='importBrk')mImportBrk(root);
   if(S.mod&&S.mod.tp==='fichasBatch')mFichasBatch(root);
-  if(S.mod&&S.mod.tp==='matchMeta')mMatchMeta(root);
   if(S.mod&&S.mod.tp==='result'){
     // Find the match object from brk using mid+bk+ct
     var _bk=S.mod.bk,_ct=S.mod.ct,_mid=S.mod.mid;
@@ -3810,26 +3820,11 @@ function pB(c){
           var t2ready=m.t2&&m.t2.indexOf('PH_')!==0&&m.t2.indexOf('GW_')!==0&&m.t2.indexOf('W_')!==0&&m.t2.indexOf('L_')!==0&&m.t2!=='BYE';
           var canClick=(S.role==='admin'||S.role==='judge')&&t1ready&&t2ready;
           var mc=h('div',{style:{marginBottom:'14px',cursor:canClick?'pointer':'default',borderRadius:'10px',overflow:'hidden',border:'1px solid var(--br)'},onclick:canClick?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null});
-          if(_matchMeta(m)){
-            var canEditMeta=S.role==='admin';
-            var metaBar=h('div',{
-              style:{fontSize:'10px',color:'var(--tx3)',padding:'4px 10px',background:'var(--c2)',borderBottom:'1px solid var(--br)',cursor:canEditMeta?'pointer':'default',display:'flex',gap:'6px',alignItems:'center'},
-              title:canEditMeta?'Clique para editar hora, local e data':null,
-              onclick:canEditMeta?(function(mx){return function(ev){ev.stopPropagation();S.mod={tp:'matchMeta',m:mx,bk:bkey,ct:S.bc};R()}})(m):null
-            },
-              m._hora?h('span',{style:{fontWeight:'600'}},m._hora):null,
-              m.lc?h('span',{style:{opacity:'.7'}},m.lc):null,
-              m._data?h('span',{style:{opacity:'.7',color:'var(--am)'}},'📅 '+m._data):null,
-              canEditMeta?h('span',{style:{marginLeft:'auto',opacity:'.4'}},'✎'):null
-            );
-            mc.appendChild(metaBar);
-          } else if(S.role==='admin'){
-            // No meta yet — but admin should still be able to add one.
-            mc.appendChild(h('div',{
-              style:{fontSize:'10px',color:'var(--tx3)',padding:'4px 10px',background:'var(--c2)',borderBottom:'1px solid var(--br)',cursor:'pointer',opacity:'.6',textAlign:'center'},
-              onclick:(function(mx){return function(ev){ev.stopPropagation();S.mod={tp:'matchMeta',m:mx,bk:bkey,ct:S.bc};R()}})(m)
-            },'+ definir hora, local e data'));
-          }
+          if(_matchMeta(m))mc.appendChild(h('div',{style:{fontSize:'10px',color:'var(--tx3)',padding:'4px 10px',background:'var(--c2)',borderBottom:'1px solid var(--br)'}},
+            h('span',{style:{fontWeight:'600'}},m._hora||''),
+            m.lc?h('span',{style:{marginLeft:'6px',opacity:'.7'}},m.lc):null,
+            m._data?h('span',{style:{marginLeft:'6px',opacity:'.7'}},m._data):null
+          ));
           mc.appendChild(tRow(m.t1,dn1,t1win,t1wo,score1));
           mc.appendChild(tRow(m.t2,dn2,t2win,t2wo,score2));
           col.appendChild(mc);
@@ -4031,16 +4026,24 @@ function pR(c){
   var crF=S.bay?cr.filter(function(r){var nY=function(y){return(y||'').replace(/[\u00b0\u00ba]/g,'\u00ba').replace(/\s+/g,' ').trim().toUpperCase()};return nY(r.yr)===nY(S.bay)}):cr;
 
   // Extract unique series from turma names for filter
-  var seriesInRk=[...new Set(crF.map(function(r){
-    var nm=(r.nm||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
-    // Match "8º ANO VERDE" → "8º ANO", "3º VERMELHO" → "3º", "ENS. MÉDIO ..." → "ENS. MÉDIO"
-    // Priority: full "Xº ANO", then "ENS. MÉDIO", then "Xª SÉRIE", then bare "Xº"
-    var m=nm.match(/^(\d+[\u00ba]?\s*ANO)/)||
-          nm.match(/^(ENS\.?\s*M[EÉ]DIO)/i)||
-          nm.match(/^(\d+[\u00baª]?[\u00ba]?\s*S[ÉE]RIE)/)||
-          nm.match(/^(\d+[\u00ba]?)/);
-    return m?m[1].trim():'OUTROS';
-  }))].sort(function(a,b){
+  // For names like "3º VERDE", "5º ROXO" (no explicit "ANO"), we infer the
+  // "ANO" suffix so they merge with proper "3º ANO", "5º ANO" rather than
+  // appearing as separate "3°", "5°" filter chips.
+  function _extractSerieFromName(nm){
+    var up=(nm||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
+    var m=up.match(/^(\d+[\u00ba]?\s*ANO)/)||
+          up.match(/^(ENS\.?\s*M[EÉ]DIO)/i)||
+          up.match(/^(\d+[\u00baª]?[\u00ba]?\s*S[ÉE]RIE)/);
+    if(m)return m[1].trim().replace(/\s+/g,' ');
+    // Fallback: bare digit. Treat as "Nº ANO" (Fundamental convention).
+    var bare=up.match(/^(\d+)[\u00ba]?/);
+    if(bare){
+      var n=parseInt(bare[1],10);
+      if(n>=1)return n+'º ANO';
+    }
+    return 'OUTROS';
+  }
+  var seriesInRk=[...new Set(crF.map(function(r){return _extractSerieFromName(r.nm)}))].sort(function(a,b){
     function sr(s){if(/ENS/i.test(s))return 100;return parseInt(s)||99}
     var na=sr(a),nb=sr(b);
     return na!==nb?na-nb:a.localeCompare(b,'pt');
@@ -4060,14 +4063,7 @@ function pR(c){
     for(var i=0;i<COLOR_NAMES.length;i++)if(up.indexOf(COLOR_NAMES[i])>=0)return COLOR_NAMES[i];
     return null;
   }
-  function extractSerie(nm){
-    var up=(nm||'').replace(/[\u00b0\u00ba]/g,'\u00ba').trim().toUpperCase();
-    var m=up.match(/^(\d+[\u00ba]?\s*ANO)/)||
-          up.match(/^(ENS\.?\s*M[EÉ]DIO)/i)||
-          up.match(/^(\d+[\u00baª]?[\u00ba]?\s*S[ÉE]RIE)/)||
-          up.match(/^(\d+[\u00ba]?)/);
-    return m?m[1].trim():'OUTROS';
-  }
+  function extractSerie(nm){return _extractSerieFromName(nm)}
 
   if(seriesInRk.length>1){
     // Multi-select series filter
