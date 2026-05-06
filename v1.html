@@ -909,7 +909,7 @@ function _buildJimRows(rows){
 
     function buildMatch(m,t1id,t2id,is3rd){
       var match={id:u(),r:0,t1:t1id,t2:t2id,s1:null,s2:null,w:null,dt:'',
-        lc:m.local||'',is3rd:is3rd||false,_hora:m.hora||''};
+        lc:m.local||'',is3rd:is3rd||false,_hora:m.hora||'',_data:m.data||m._data||''};
       // Store original slot codes for GW_/W_/L_ for re-computation
       if(t1id&&(t1id.indexOf('GW_')===0||t1id.indexOf('W_')===0||t1id.indexOf('L_')===0))match._slot1=t1id;
       if(t2id&&(t2id.indexOf('GW_')===0||t2id.indexOf('W_')===0||t2id.indexOf('L_')===0))match._slot2=t2id;
@@ -1747,7 +1747,38 @@ function logAudit(action,details){
   // Keep only last 500 entries to avoid bloat
   if(S.auditLog.length>500)S.auditLog=S.auditLog.slice(0,500);
 }
-function nrmYr(y){return(y||'').replace(/[°º]/g,'º').replace(/\s+/g,' ').trim().toUpperCase()}
+// Build the meta-info string for a bracket match: "HH:MM LOCAL DD/MM".
+// Every part is optional. Used in pB (bracket page rendering) and the
+// HTML exports so all surfaces show the same info in the same order.
+function _matchMeta(m){
+  if(!m)return '';
+  var parts=[];
+  if(m._hora)parts.push(m._hora);
+  if(m.lc)parts.push(m.lc);
+  if(m._data)parts.push(m._data);
+  return parts.join(' · ');
+}
+
+function nrmYr(y){
+  if(!y)return '';
+  // Normalize visual variants of º/° and whitespace
+  var s=String(y).replace(/[°º]/g,'º').replace(/\s+/g,' ').trim().toUpperCase();
+  // Standardize the "year" field for K-12 in Brazil:
+  //   1-9 → "Nº ANO" (Fundamental)
+  //   1-3 + SÉRIE → "Nª SÉRIE" (Médio)
+  // Already-formatted values pass through unchanged.
+  // Detect a number at the start, optionally followed by ordinal symbol and ANO/SÉRIE.
+  var m=s.match(/^(\d+)\s*[ºª]?\s*(ANO|SERIE|SÉRIE)?\s*$/);
+  if(m){
+    var n=parseInt(m[1],10);
+    var word=m[2]||'';
+    if(word==='SERIE'||word==='SÉRIE')return n+'ª SÉRIE';
+    // No keyword: assume ANO for 1-9, SÉRIE for 10+, else literal
+    if(n>=1&&n<=9)return n+'º ANO';
+    return n+'º ANO';
+  }
+  return s;
+}
 function getAnos(){var a=[];S.cls.forEach(function(c){var y=nrmYr(c.yr);if(y&&a.indexOf(y)<0)a.push(y)});a.sort();return a}
 function getClsByAno(ano){return S.cls.filter(function(c){return nrmYr(c.yr)===ano})}
 
@@ -2623,7 +2654,7 @@ function R(){
   if(!S.auth){renderLogin(root);return;}
 
   var aN=[{id:'dashboard',l:'Dashboard',e:'🏠',s:'Geral'},{id:'classes',l:'Turmas',e:'🏫',s:'Cadastros'},{id:'sports',l:'Esportes',e:'⚽',s:'Cadastros'},{id:'venues',l:'Locais',e:'📍',s:'Cadastros'},{id:'enrollments',l:'Inscrições',e:'📋',s:'Competição'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Competição'},{id:'schedule',l:'Agenda',e:'📅',s:'Competição'},{id:'conflicts',l:'Conflitos',e:'⚠️',s:'Competição'},{id:'individual',l:'Individuais',e:'🏅',s:'Competição'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'scoring_page',l:'Pontuação',e:'🎯',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'},{id:'logins',l:'Logins',e:'🔑',s:'Acesso'},{id:'audit',l:'Auditoria',e:'📋',s:'Acesso'}];
-  var sN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'enroll',l:'Inscrever',e:'📋',s:'Ações'},{id:'brackets',l:'Jogos',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'}];
+  var sN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'brackets',l:'Jogos',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'}];
   var jN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'recursos',l:'Recursos',e:'📝',s:'Ações'}];
   var nav=S.role==='admin'?aN:S.role==='judge'?jN:sN;
   var gr={};nav.forEach(function(n){if(!gr[n.s])gr[n.s]=[];gr[n.s].push(n)});
@@ -2696,6 +2727,9 @@ function R(){
 
   var content=h('div',{'class':'content'});
   var pages={dashboard:pD,classes:pC,sports:pS,venues:pVenues,settings_page:function(c){S.page='dashboard';R();return;},enrollments:pEA,enroll:pES,brackets:pB,schedule:pSc,ranking:pR,conflicts:pConflicts,downloads:pDl,'import':pI,logins:pLogins,recursos:pRecursos,scoring_page:pScoring,individual:pIndividual,audit:pAudit};
+  // Guard: students cannot access enroll or recursos pages, even by typing the URL.
+  // If somehow they ended up there, send them back to the dashboard.
+  if(S.role==='student'&&(S.page==='enroll'||S.page==='recursos')){S.page='dashboard'}
   (pages[S.page]||pD)(content);
 
   var mainDiv=h('div',{'class':'main'},topbar,content);
@@ -2728,6 +2762,7 @@ function R(){
   if(S.mod&&S.mod.tp==='settings')mSettings(root);
   if(S.mod&&S.mod.tp==='importBrk')mImportBrk(root);
   if(S.mod&&S.mod.tp==='fichasBatch')mFichasBatch(root);
+  if(S.mod&&S.mod.tp==='matchMeta')mMatchMeta(root);
   if(S.mod&&S.mod.tp==='result'){
     // Find the match object from brk using mid+bk+ct
     var _bk=S.mod.bk,_ct=S.mod.ct,_mid=S.mod.mid;
@@ -3475,7 +3510,7 @@ function pB(c){
         teams.appendChild(h('span',{style:{color:'var(--tx3)',fontSize:'11px'}},'x'));
         teams.appendChild(dot(n2));
         teams.appendChild(h('span',{style:{fontWeight:'500',color:'var(--tx)'}},n2));
-        if(m._hora||m.lc)teams.appendChild(h('span',{style:{fontSize:'10px',color:'var(--tx3)',marginLeft:'6px'}},([m._hora,m.lc].filter(Boolean).join(' '))));
+        if(_matchMeta(m))teams.appendChild(h('span',{style:{fontSize:'10px',color:'var(--tx3)',marginLeft:'6px'}},_matchMeta(m)));
         row.appendChild(teams);
 
         var res=h('div',{style:{textAlign:'right',fontSize:'13px',fontWeight:'700',color:hasRes?'var(--gn)':'var(--tx3)'}});
@@ -3662,7 +3697,7 @@ function pB(c){
             });
             var hdrDiv=h('div',{style:{background:color+'22',padding:'6px 14px',fontSize:'10px',fontWeight:'700',color:color,textTransform:'uppercase',letterSpacing:'.08em',display:'flex',justifyContent:'space-between',alignItems:'center'}},
               label,
-              ([m._hora,m.lc].filter(Boolean).join(' '))?h('span',{style:{fontWeight:'400',opacity:'.8',fontSize:'9px'}},([m._hora,m.lc].filter(Boolean).join(' '))):null
+              _matchMeta(m)?h('span',{style:{fontWeight:'400',opacity:'.8',fontSize:'9px'}},_matchMeta(m)):null
             );
             card.appendChild(hdrDiv);
             function teamRow(nm,isWin,score,isPH){
@@ -3775,10 +3810,26 @@ function pB(c){
           var t2ready=m.t2&&m.t2.indexOf('PH_')!==0&&m.t2.indexOf('GW_')!==0&&m.t2.indexOf('W_')!==0&&m.t2.indexOf('L_')!==0&&m.t2!=='BYE';
           var canClick=(S.role==='admin'||S.role==='judge')&&t1ready&&t2ready;
           var mc=h('div',{style:{marginBottom:'14px',cursor:canClick?'pointer':'default',borderRadius:'10px',overflow:'hidden',border:'1px solid var(--br)'},onclick:canClick?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null});
-          if(m._hora||m.lc)mc.appendChild(h('div',{style:{fontSize:'10px',color:'var(--tx3)',padding:'4px 10px',background:'var(--c2)',borderBottom:'1px solid var(--br)'}},
-            h('span',{style:{fontWeight:'600'}},m._hora||''),
-            m.lc?h('span',{style:{marginLeft:'6px',opacity:'.7'}},m.lc):null
-          ));
+          if(_matchMeta(m)){
+            var canEditMeta=S.role==='admin';
+            var metaBar=h('div',{
+              style:{fontSize:'10px',color:'var(--tx3)',padding:'4px 10px',background:'var(--c2)',borderBottom:'1px solid var(--br)',cursor:canEditMeta?'pointer':'default',display:'flex',gap:'6px',alignItems:'center'},
+              title:canEditMeta?'Clique para editar hora, local e data':null,
+              onclick:canEditMeta?(function(mx){return function(ev){ev.stopPropagation();S.mod={tp:'matchMeta',m:mx,bk:bkey,ct:S.bc};R()}})(m):null
+            },
+              m._hora?h('span',{style:{fontWeight:'600'}},m._hora):null,
+              m.lc?h('span',{style:{opacity:'.7'}},m.lc):null,
+              m._data?h('span',{style:{opacity:'.7',color:'var(--am)'}},'📅 '+m._data):null,
+              canEditMeta?h('span',{style:{marginLeft:'auto',opacity:'.4'}},'✎'):null
+            );
+            mc.appendChild(metaBar);
+          } else if(S.role==='admin'){
+            // No meta yet — but admin should still be able to add one.
+            mc.appendChild(h('div',{
+              style:{fontSize:'10px',color:'var(--tx3)',padding:'4px 10px',background:'var(--c2)',borderBottom:'1px solid var(--br)',cursor:'pointer',opacity:'.6',textAlign:'center'},
+              onclick:(function(mx){return function(ev){ev.stopPropagation();S.mod={tp:'matchMeta',m:mx,bk:bkey,ct:S.bc};R()}})(m)
+            },'+ definir hora, local e data'));
+          }
           mc.appendChild(tRow(m.t1,dn1,t1win,t1wo,score1));
           mc.appendChild(tRow(m.t2,dn2,t2win,t2wo,score2));
           col.appendChild(mc);
@@ -4939,6 +4990,81 @@ function impFichasBatch(files){
   }
   S.mod={tp:'fichasBatch',items:items,running:false};
   R();
+}
+
+// Modal: edit hora, local, and data (date) of a single bracket match.
+// Used in pB when admin clicks the meta bar of a match in tree view.
+// Saves directly to m._hora / m.lc / m._data and re-renders.
+function mMatchMeta(c){
+  var m=S.mod.m;
+  if(!m){S.mod=null;R();return}
+  var ov=h('div',{'class':'ov'});
+  ov.onclick=function(e){if(e.target===ov){S.mod=null;R()}};
+  var close=function(){S.mod=null;R()};
+
+  var md=h('div',{'class':'md',style:{maxWidth:'420px'}});
+  md.appendChild(h('div',{'class':'md-h'},
+    h('h3',{},'⏰ Hora, Local e Data'),
+    h('button',{'class':'btn btn-s',onclick:close},'✕')
+  ));
+
+  var body=h('div',{style:{padding:'18px 20px'}});
+
+  // Show team names so the user knows which match is being edited
+  var n1=tName(m.t1)||'?', n2=tName(m.t2)||'?';
+  body.appendChild(h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',padding:'10px 12px',background:'var(--c2)',borderRadius:'8px'}},
+    h('b',{style:{color:'var(--tx)'}},n1),
+    h('span',{style:{margin:'0 8px',color:'var(--tx3)'}},'vs'),
+    h('b',{style:{color:'var(--tx)'}},n2)
+  ));
+
+  function field(label,id,val,placeholder,help){
+    body.appendChild(h('label',{style:{display:'block',fontSize:'11px',fontWeight:'600',color:'var(--tx2)',textTransform:'uppercase',letterSpacing:'.5px',marginTop:'10px',marginBottom:'4px'}},label));
+    body.appendChild(h('input',{type:'text',id:'mm_'+id,'class':'fi',value:val||'',placeholder:placeholder,style:{width:'100%'}}));
+    if(help)body.appendChild(h('div',{style:{fontSize:'10px',color:'var(--tx3)',marginTop:'3px'}},help));
+  }
+
+  field('Hora','hora',m._hora,'Ex.: 08:00 ou 14:30','Formato HH:MM');
+  field('Local','lc',m.lc,'Ex.: QUADRA 01, GINÁSIO A, CAMPO C');
+  field('Data','data',m._data,'Ex.: 11/05','Formato DD/MM (sem ano). Use a data do jogo.');
+
+  // "Apply to all matches in this round" checkbox — convenient when an
+  // entire phase is on the same date.
+  var applyAll=h('input',{type:'checkbox',id:'mm_applyAll',style:{marginRight:'6px'}});
+  body.appendChild(h('label',{style:{display:'flex',alignItems:'center',marginTop:'14px',fontSize:'12px',color:'var(--tx2)',cursor:'pointer'}},
+    applyAll,'Aplicar esta DATA a todos os jogos da mesma rodada'
+  ));
+
+  md.appendChild(body);
+
+  var footer=h('div',{style:{padding:'12px 20px',borderTop:'1px solid var(--br)',display:'flex',gap:'8px',justifyContent:'flex-end'}});
+  footer.appendChild(h('button',{'class':'btn btn-s',onclick:close},'Cancelar'));
+  footer.appendChild(h('button',{'class':'btn btn-p',onclick:function(){
+    var hora=(document.getElementById('mm_hora')||{}).value||'';
+    var lc=(document.getElementById('mm_lc')||{}).value||'';
+    var data=(document.getElementById('mm_data')||{}).value||'';
+    m._hora=hora.trim();
+    m.lc=lc.trim();
+    m._data=data.trim();
+    // Apply data to whole round if requested
+    if(applyAll.checked&&data.trim()){
+      var bk=S.mod.bk, ct=S.mod.ct;
+      var rds=S.brk[bk]&&S.brk[bk][ct]?S.brk[bk][ct]:[];
+      rds.forEach(function(rd){
+        if(rd.m&&rd.m.some(function(mx){return mx.id===m.id})){
+          rd.m.forEach(function(mx){mx._data=data.trim()});
+        }
+      });
+    }
+    logAudit('Editar meta do jogo','Match '+m.id+': hora='+hora+' local='+lc+' data='+data);
+    S.mod=null;
+    scheduleSave();
+    R();
+  }},'Salvar'));
+  md.appendChild(footer);
+
+  ov.appendChild(md);
+  c.appendChild(ov);
 }
 
 function mFichasBatch(c){
@@ -6511,7 +6637,8 @@ function _runExport(rds,sp,bcat,title,serie){
       var n1=tName(m.t1),n2=tName(m.t2);
       var w1=m.w===m.t1?' winner':'',w2=m.w===m.t2?' winner':'';
       var wo1=m.wo===m.t1?' wo':'',wo2=m.wo===m.t2?' wo':'';
-      var hora=m._hora?'<div class="mhora">'+m._hora+(m.lc?' · '+m.lc:'')+'</div>':'';
+      var metaStr=_matchMeta(m);
+      var hora=metaStr?'<div class="mhora">'+metaStr+'</div>':'';
       var dot1='<span class="tdot" style="background:'+ec(n1)+'"></span>';
       var dot2='<span class="tdot" style="background:'+ec(n2)+'"></span>';
       // Distinguish 3rd-place match with a special label band on top
@@ -6542,7 +6669,7 @@ function _runExport(rds,sp,bcat,title,serie){
     displayM.forEach(function(m,i){
       var n1=tName(m.t1),n2=tName(m.t2);
       var hasRes=m.s1!=null&&m.s2!=null;
-      var meta=[m._hora,m.lc].filter(Boolean).join(' ');
+      var meta=_matchMeta(m);
       matchListHtml+='<tr><td class="num">'+(i+1)+'</td>'
         +'<td><span class="dot" style="background:'+ec(n1)+'"></span><b>'+n1+'</b>'
         +' <span class="vs">x</span> '
@@ -6560,7 +6687,7 @@ function _runExport(rds,sp,bcat,title,serie){
         var label=m.is3rd?'🥉 Disputa de 3º Lugar':'🏆 Final';
         var color=m.is3rd?'#f59e0b':'#22d3ee';
         var hasRes=m.s1!=null&&m.s2!=null;
-        var hora=[m._hora,m.lc].filter(Boolean).join(' ');
+        var hora=_matchMeta(m);
         matchListHtml+='<div style="border:2px solid '+color+';border-radius:10px;overflow:hidden;margin-bottom:10px">'
           +'<div style="background:'+color+'22;padding:6px 14px;font-size:11px;font-weight:700;color:'+color+';display:flex;justify-content:space-between">'
           +label+(hora?'<span style="font-weight:400">'+hora+'</span>':'')+' </div>'
@@ -8303,7 +8430,10 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
       console.log('Loaded: '+S.cls.length+' turmas, '+S.spt.length+' sports, '+S.enr.length+' enrollments, '+Object.keys(S.brk).length+' brackets');
       console.log('Sport names:', S.spt.map(function(s){return s.nm+'/'+(s.gender||'-')}).join(' | '));
       // Normalize all data to uppercase (visual only — non-destructive)
-      S.cls.forEach(function(c){c.nm=uc(c.nm);c.yr=uc(c.yr)});
+      // Normalize all data — uppercase + standardized year format
+      // ("3°" → "3º ANO", "1 SERIE" → "1ª SÉRIE", etc.). This is purely
+      // visual normalization, no data is moved or merged.
+      S.cls.forEach(function(c){c.nm=uc(c.nm);c.yr=nrmYr(c.yr)});
       S.spt.forEach(function(s){s.nm=uc(s.nm)});
       S.enr.forEach(function(e){e.tn=uc(e.tn)});
       // Auto-cleanup intentionally DISABLED. Earlier attempts to run dedupes
