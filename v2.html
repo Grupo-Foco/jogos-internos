@@ -512,7 +512,7 @@ var XLSXMini = {
 }
 
 
-var S={role:'admin',page:'dashboard',sbo:false,ev:{name:'Jogos Internos 2026'},cls:[],spt:[],enr:[],brk:{},locs:[],mod:null,bs:'',bc:'',rt:'class',theme:'dark',ir:null,bay:'',say:'',auth:null,logins:[],judgeLogins:[],adminLogins:[],auditLog:[],recursos:[],adminPass:'admin123',loginErr:'',thirdPlace:{},nextGameAlert:null,studentHours:null,rankingPublic:true,appInfo:{author:'Rodolfo C. Pinheiro',contact:'rodolfinhocp@gmail.com',version:'4.0'},sb:{url:'https://omevoikikvkjshormjoh.supabase.co',key:'',enabled:true,status:'',syncing:false},
+var S={role:'admin',page:'dashboard',sbo:false,ev:{name:'Jogos Internos 2026'},cls:[],spt:[],enr:[],brk:{},locs:[],mod:null,bs:'',bc:'',rt:'class',theme:'dark',ir:null,bay:'',say:'',auth:null,logins:[],judgeLogins:[],adminLogins:[],auditLog:[],recursos:[],adminPass:'admin123',loginErr:'',thirdPlace:{},nextGameAlert:null,rankingAccess:{mode:'always',from:'07:00',to:'20:00'},appInfo:{author:'Rodolfo C. Pinheiro',contact:'rodolfinhocp@gmail.com',version:'4.0'},sb:{url:'https://omevoikikvkjshormjoh.supabase.co',key:'',enabled:true,status:'',syncing:false},
 // v4.0: Scoring, WO, Individual sports
 scoring:{p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1,pWin:3,pWO:-2}, // points per position + per win + WO penalty
 podiums:[], // [{id,sportId,category,year,p1classId,p2classId,p3classId,notes}]
@@ -2584,6 +2584,38 @@ function h(tag,attrs){
   return e;
 }
 
+// Returns whether the Ranking page should be visible to students RIGHT NOW.
+// Driven by S.rankingAccess = { mode, from, to } where:
+//   mode='always' → always visible
+//   mode='never'  → always hidden
+//   mode='window' → visible only between from/to (HH:MM, recurrent every day)
+// Admins and judges always see Ranking — this only affects students.
+function _isRankingVisible(){
+  var ra=S.rankingAccess;
+  if(!ra||!ra.mode||ra.mode==='always')return true;
+  if(ra.mode==='never')return false;
+  if(ra.mode==='window'){
+    if(!ra.from||!ra.to)return true; // misconfigured → fall back to visible
+    var now=new Date();
+    var nowM=now.getHours()*60+now.getMinutes();
+    function _toMin(t){var p=String(t).split(':');return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0)}
+    var fromM=_toMin(ra.from), toM=_toMin(ra.to);
+    if(fromM<=toM){
+      // Same-day window (07:00 → 20:00)
+      return nowM>=fromM&&nowM<toM;
+    } else {
+      // Wrap-around window (22:00 → 06:00) — covers overnight cases
+      return nowM>=fromM||nowM<toM;
+    }
+  }
+  return true;
+}
+// Expose for runtime debugging in the browser devtools.
+if(typeof window!=='undefined'){
+  window._isRankingVisible=_isRankingVisible;
+  window._rkDebug=function(){return{rankingAccess:S.rankingAccess,role:S.role,now:new Date().toLocaleTimeString(),visible:_isRankingVisible()}};
+}
+
 function R(){
   var root=document.getElementById('app');
   // Save scroll positions before re-render to prevent scroll-to-top bug
@@ -2624,8 +2656,8 @@ function R(){
 
   var aN=[{id:'dashboard',l:'Dashboard',e:'🏠',s:'Geral'},{id:'classes',l:'Turmas',e:'🏫',s:'Cadastros'},{id:'sports',l:'Esportes',e:'⚽',s:'Cadastros'},{id:'venues',l:'Locais',e:'📍',s:'Cadastros'},{id:'enrollments',l:'Inscrições',e:'📋',s:'Competição'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Competição'},{id:'schedule',l:'Agenda',e:'📅',s:'Competição'},{id:'conflicts',l:'Conflitos',e:'⚠️',s:'Competição'},{id:'individual',l:'Individuais',e:'🏅',s:'Competição'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'scoring_page',l:'Pontuação',e:'🎯',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'},{id:'logins',l:'Logins',e:'🔑',s:'Acesso'},{id:'audit',l:'Auditoria',e:'📋',s:'Acesso'}];
   var sN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'brackets',l:'Jogos',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'}];
-  // Optional admin toggle: when S.rankingPublic === false, students don't see Ranking.
-  if(S.role==='student'&&S.rankingPublic===false){
+  // Hide Ranking for students based on admin's rankingAccess config.
+  if(S.role==='student'&&!_isRankingVisible()){
     sN=sN.filter(function(it){return it.id!=='ranking'});
   }
   var jN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'recursos',l:'Recursos',e:'📝',s:'Ações'}];
@@ -2703,7 +2735,7 @@ function R(){
   // Guard: students cannot access enroll/recursos/blocked-ranking pages,
   // even by typing the URL. Send them to the dashboard.
   if(S.role==='student'&&(S.page==='enroll'||S.page==='recursos'))S.page='dashboard';
-  if(S.role==='student'&&S.rankingPublic===false&&S.page==='ranking')S.page='dashboard';
+  if(S.role==='student'&&!_isRankingVisible()&&S.page==='ranking')S.page='dashboard';
   (pages[S.page]||pD)(content);
 
   var mainDiv=h('div',{'class':'main'},topbar,content);
@@ -6881,19 +6913,6 @@ function renderLogin(root){
       return l.login.toLowerCase()===lg.toLowerCase()&&l.senha===pw;
     });
     if(found){
-      // Optional: respect S.studentHours = {from:'14:00', to:'20:00'}.
-      // Outside that window, students cannot log in. Admins/judges unaffected.
-      if(S.studentHours&&S.studentHours.from&&S.studentHours.to){
-        var _now=new Date();
-        var _nowM=_now.getHours()*60+_now.getMinutes();
-        function _toMin(t){var p=String(t).split(':');return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0)}
-        var _fromM=_toMin(S.studentHours.from);
-        var _toM=_toMin(S.studentHours.to);
-        if(_nowM<_fromM||_nowM>=_toM){
-          S.loginErr='Acesso de alunos liberado apenas das '+S.studentHours.from+' às '+S.studentHours.to+'. Tente novamente neste horário.';
-          R();return;
-        }
-      }
       var cl=S.cls.find(function(c){return c.id===found.ci});
       S.auth={role:'student',ci:found.ci,cn:found.cn,login:found.login};
       S.role='student';S.page='dashboard';S.loginErr='';R();return;
@@ -6969,77 +6988,76 @@ function pLogins(c){
   pwSection.appendChild(pwBody);
   c.appendChild(pwSection);
 
-  // ── Student access controls (hour window + ranking visibility) ──────────
-  var stuSection=h('div',{'class':'card',style:{marginBottom:'20px'}});
-  stuSection.appendChild(h('div',{'class':'card-h'},h('div',{'class':'card-t'},'👥 Acesso dos Alunos')));
-  var stuBody=h('div',{'class':'card-b'});
+  // ── Ranking visibility for students ─────────────────────────────────────
+  // 3-mode model:
+  //   always → ranking visible 24/7
+  //   never  → ranking hidden
+  //   window → ranking visible only between from/to (HH:MM, recurrent every day)
+  // Students always log in normally. Only the Ranking page is gated.
+  var rkSection=h('div',{'class':'card',style:{marginBottom:'20px'}});
+  rkSection.appendChild(h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📊 Visibilidade do Ranking para Alunos')));
+  var rkBody=h('div',{'class':'card-b'});
 
-  var hoursOn=!!(S.studentHours&&S.studentHours.from&&S.studentHours.to);
-  var fromInp=h('input',{'class':'fi',type:'time',value:S.studentHours&&S.studentHours.from||'14:00',style:{maxWidth:'130px'}});
-  var toInp=h('input',{'class':'fi',type:'time',value:S.studentHours&&S.studentHours.to||'20:00',style:{maxWidth:'130px'}});
-  var hoursToggle=h('input',{type:'checkbox',checked:hoursOn,style:{transform:'scale(1.3)',marginRight:'8px'}});
+  var ra=S.rankingAccess||{mode:'always',from:'07:00',to:'20:00'};
+  var rkMsg=h('div',{style:{fontSize:'12px',marginTop:'14px',minHeight:'18px'}});
 
-  function _refreshHourFields(){
-    var enabled=hoursToggle.checked;
-    fromInp.disabled=!enabled;
-    toInp.disabled=!enabled;
-    fromInp.style.opacity=enabled?'1':'.4';
-    toInp.style.opacity=enabled?'1':'.4';
+  // Three radio buttons + window inputs that get enabled/disabled
+  var rAlways=h('input',{type:'radio',name:'rkMode',value:'always',checked:ra.mode==='always',style:{marginRight:'8px',transform:'scale(1.2)'}});
+  var rNever=h('input',{type:'radio',name:'rkMode',value:'never',checked:ra.mode==='never',style:{marginRight:'8px',transform:'scale(1.2)'}});
+  var rWindow=h('input',{type:'radio',name:'rkMode',value:'window',checked:ra.mode==='window',style:{marginRight:'8px',transform:'scale(1.2)'}});
+  var rkFromInp=h('input',{'class':'fi',type:'time',value:ra.from||'07:00',style:{maxWidth:'130px'}});
+  var rkToInp=h('input',{'class':'fi',type:'time',value:ra.to||'20:00',style:{maxWidth:'130px'}});
+
+  function _rkRefresh(){
+    var inWin=rWindow.checked;
+    rkFromInp.disabled=!inWin;
+    rkToInp.disabled=!inWin;
+    rkFromInp.style.opacity=inWin?'1':'.4';
+    rkToInp.style.opacity=inWin?'1':'.4';
   }
-  hoursToggle.onchange=function(){_refreshHourFields()};
-  _refreshHourFields();
+  rAlways.onchange=_rkRefresh;rNever.onchange=_rkRefresh;rWindow.onchange=_rkRefresh;
+  _rkRefresh();
 
-  var hourMsg=h('div',{style:{fontSize:'12px',marginTop:'8px',height:'18px'}});
-  stuBody.appendChild(h('div',{style:{padding:'10px 0',borderBottom:'1px solid var(--br)',marginBottom:'14px'}},
-    h('label',{style:{display:'flex',alignItems:'center',cursor:'pointer',fontSize:'13px',fontWeight:'600',marginBottom:'8px'}},
-      hoursToggle,'Restringir horário de acesso dos alunos'
-    ),
-    h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginBottom:'10px',marginLeft:'30px'}},
-      'Quando ativado, alunos só podem fazer login dentro da janela definida. Admins e juízes não são afetados.'),
-    h('div',{style:{display:'flex',gap:'10px',alignItems:'flex-end',flexWrap:'wrap',marginLeft:'30px'}},
-      h('div',{'class':'fg',style:{marginBottom:'0'}},h('label',{'class':'fl'},'De'),fromInp),
-      h('div',{'class':'fg',style:{marginBottom:'0'}},h('label',{'class':'fl'},'Até'),toInp),
-      h('button',{'class':'btn btn-p',onclick:function(){
-        if(!hoursToggle.checked){
-          S.studentHours=null;
-          hourMsg.style.color='#34d399';hourMsg.textContent='✅ Restrição desativada — alunos podem acessar a qualquer hora.';
-        } else {
-          if(!fromInp.value||!toInp.value){
-            hourMsg.style.color='#f87171';hourMsg.textContent='Preencha os dois horários.';return;
-          }
-          if(fromInp.value>=toInp.value){
-            hourMsg.style.color='#f87171';hourMsg.textContent='O horário inicial deve ser antes do final.';return;
-          }
-          S.studentHours={from:fromInp.value,to:toInp.value};
-          hourMsg.style.color='#34d399';hourMsg.textContent='✅ Janela de '+fromInp.value+' às '+toInp.value+' aplicada.';
+  function _radioLabel(input,title,desc){
+    return h('label',{style:{display:'flex',alignItems:'flex-start',cursor:'pointer',padding:'10px 0',borderBottom:'1px solid var(--br)'}},
+      input,
+      h('div',{style:{flex:'1'}},
+        h('div',{style:{fontSize:'13px',fontWeight:'600'}},title),
+        h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'2px'}},desc)
+      )
+    );
+  }
+
+  rkBody.appendChild(_radioLabel(rAlways,'Sempre visível','Os alunos veem o ranking a qualquer hora.'));
+  rkBody.appendChild(_radioLabel(rNever,'Nunca visível','O ranking fica oculto até você reativar (use nos últimos dias dos jogos para não desanimar turmas).'));
+  rkBody.appendChild(_radioLabel(rWindow,'Visível só em horário definido','Janela horária recorrente todo dia. Útil para impedir consultas de madrugada.'));
+
+  // Window inputs (only used when mode='window')
+  rkBody.appendChild(h('div',{style:{display:'flex',gap:'10px',alignItems:'flex-end',flexWrap:'wrap',marginTop:'12px',marginLeft:'30px'}},
+    h('div',{'class':'fg',style:{marginBottom:'0'}},h('label',{'class':'fl'},'De'),rkFromInp),
+    h('div',{'class':'fg',style:{marginBottom:'0'}},h('label',{'class':'fl'},'Até'),rkToInp),
+    h('button',{'class':'btn btn-p',onclick:function(){
+      var mode='always';
+      if(rNever.checked)mode='never';
+      else if(rWindow.checked)mode='window';
+      if(mode==='window'){
+        if(!rkFromInp.value||!rkToInp.value){
+          rkMsg.style.color='#f87171';rkMsg.textContent='Preencha os dois horários da janela.';return;
         }
-        scheduleSave();
-        logAudit('Acesso dos alunos','Janela horária: '+(S.studentHours?S.studentHours.from+'-'+S.studentHours.to:'sem restrição'));
-      }},'Salvar')
-    ),
-    hourMsg
+      }
+      S.rankingAccess={mode:mode,from:rkFromInp.value||'07:00',to:rkToInp.value||'20:00'};
+      var label=(mode==='always'?'sempre visível'
+                :mode==='never' ?'sempre oculto'
+                                :'visível das '+S.rankingAccess.from+' às '+S.rankingAccess.to);
+      rkMsg.style.color='#34d399';rkMsg.textContent='✅ Salvo: ranking '+label+'.';
+      scheduleSave();
+      logAudit('Visibilidade do Ranking',label);
+    }},'Salvar')
   ));
+  rkBody.appendChild(rkMsg);
 
-  var rankToggle=h('input',{type:'checkbox',checked:S.rankingPublic!==false,style:{transform:'scale(1.3)',marginRight:'8px'}});
-  var rankMsg=h('div',{style:{fontSize:'12px',marginTop:'8px',height:'18px'}});
-  rankToggle.onchange=function(){
-    S.rankingPublic=rankToggle.checked;
-    rankMsg.style.color='#34d399';
-    rankMsg.textContent='✅ Ranking '+(S.rankingPublic?'visível':'oculto')+' para alunos.';
-    scheduleSave();
-    logAudit('Acesso dos alunos','Ranking: '+(S.rankingPublic?'público':'oculto'));
-  };
-  stuBody.appendChild(h('div',{style:{padding:'10px 0'}},
-    h('label',{style:{display:'flex',alignItems:'center',cursor:'pointer',fontSize:'13px',fontWeight:'600'}},
-      rankToggle,'Ranking visível para alunos'
-    ),
-    h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'4px',marginLeft:'30px'}},
-      'Quando desativado, a opção "Ranking" desaparece do menu do aluno e o acesso direto pela URL é bloqueado. Admins continuam vendo normalmente.'),
-    rankMsg
-  ));
-
-  stuSection.appendChild(stuBody);
-  c.appendChild(stuSection);
+  rkSection.appendChild(rkBody);
+  c.appendChild(rkSection);
 
   // ── Additional admin logins ─────────────────────────────────────────────
   var aSection=h('div',{'class':'card',style:{marginBottom:'20px'}});
@@ -8078,7 +8096,7 @@ function getDbPayload(){
       recursos:S.recursos,adminPass:S.adminPass,
       thirdPlace:S.thirdPlace,appInfo:S.appInfo,
       scoring:S.scoring,podiums:S.podiums,woLog:S.woLog,
-      studentHours:S.studentHours,rankingPublic:S.rankingPublic
+      rankingAccess:S.rankingAccess
     }),
     updated_at:new Date().toISOString()
   };
@@ -8148,11 +8166,20 @@ function loadFromSupabase(onDone){
     S.sb.syncing=false;
     if(rows&&rows.length&&rows[0].data){
       var d=JSON.parse(rows[0].data);
-      ['cls','spt','enr','brk','locs','ev','logins','judgeLogins','adminLogins','auditLog','recursos','adminPass','thirdPlace','appInfo','scoring','podiums','woLog','studentHours','rankingPublic'].forEach(function(k){
+      ['cls','spt','enr','brk','locs','ev','logins','judgeLogins','adminLogins','auditLog','recursos','adminPass','thirdPlace','appInfo','scoring','podiums','woLog','rankingAccess'].forEach(function(k){
         if(d[k]!==undefined)S[k]=d[k];
       });
       // If school has a specific admin pass from master, use it
       if(MT.schoolCode&&d.adminPass)S.adminPass=d.adminPass;
+      // Migration: when loading from a payload saved with the old shape,
+      // ensure S.rankingAccess always exists with safe defaults.
+      if(!S.rankingAccess||typeof S.rankingAccess!=='object'){
+        S.rankingAccess={mode:'always',from:'07:00',to:'20:00'};
+      } else {
+        if(!S.rankingAccess.mode)S.rankingAccess.mode='always';
+        if(!S.rankingAccess.from)S.rankingAccess.from='07:00';
+        if(!S.rankingAccess.to)S.rankingAccess.to='20:00';
+      }
       S.sb.status='ok';R();
       if(onDone)onDone(true);
     } else {
