@@ -512,7 +512,7 @@ var XLSXMini = {
 }
 
 
-var S={role:'admin',page:'dashboard',sbo:false,ev:{name:'Jogos Internos 2026'},cls:[],spt:[],enr:[],brk:{},locs:[],mod:null,bs:'',bc:'',rt:'class',theme:'dark',ir:null,bay:'',say:'',auth:null,logins:[],judgeLogins:[],adminLogins:[],auditLog:[],recursos:[],adminPass:'admin123',loginErr:'',thirdPlace:{},nextGameAlert:null,appInfo:{author:'Rodolfo C. Pinheiro',contact:'rodolfinhocp@gmail.com',version:'4.0'},sb:{url:'https://omevoikikvkjshormjoh.supabase.co',key:'',enabled:true,status:'',syncing:false},
+var S={role:'admin',page:'dashboard',sbo:false,ev:{name:'Jogos Internos 2026'},cls:[],spt:[],enr:[],brk:{},locs:[],mod:null,bs:'',bc:'',rt:'class',theme:'dark',ir:null,bay:'',say:'',auth:null,logins:[],judgeLogins:[],adminLogins:[],auditLog:[],recursos:[],adminPass:'admin123',loginErr:'',thirdPlace:{},nextGameAlert:null,studentHours:null,rankingPublic:true,appInfo:{author:'Rodolfo C. Pinheiro',contact:'rodolfinhocp@gmail.com',version:'4.0'},sb:{url:'https://omevoikikvkjshormjoh.supabase.co',key:'',enabled:true,status:'',syncing:false},
 // v4.0: Scoring, WO, Individual sports
 scoring:{p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1,pWin:3,pWO:-2}, // points per position + per win + WO penalty
 podiums:[], // [{id,sportId,category,year,p1classId,p2classId,p3classId,notes}]
@@ -2623,7 +2623,11 @@ function R(){
   if(!S.auth){renderLogin(root);return;}
 
   var aN=[{id:'dashboard',l:'Dashboard',e:'🏠',s:'Geral'},{id:'classes',l:'Turmas',e:'🏫',s:'Cadastros'},{id:'sports',l:'Esportes',e:'⚽',s:'Cadastros'},{id:'venues',l:'Locais',e:'📍',s:'Cadastros'},{id:'enrollments',l:'Inscrições',e:'📋',s:'Competição'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Competição'},{id:'schedule',l:'Agenda',e:'📅',s:'Competição'},{id:'conflicts',l:'Conflitos',e:'⚠️',s:'Competição'},{id:'individual',l:'Individuais',e:'🏅',s:'Competição'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'scoring_page',l:'Pontuação',e:'🎯',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'},{id:'logins',l:'Logins',e:'🔑',s:'Acesso'},{id:'audit',l:'Auditoria',e:'📋',s:'Acesso'}];
-  var sN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'enroll',l:'Inscrever',e:'📋',s:'Ações'},{id:'brackets',l:'Jogos',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'},{id:'recursos',l:'Recursos',e:'📝',s:'Resultados'}];
+  var sN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'brackets',l:'Jogos',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'ranking',l:'Ranking',e:'📊',s:'Resultados'}];
+  // Optional admin toggle: when S.rankingPublic === false, students don't see Ranking.
+  if(S.role==='student'&&S.rankingPublic===false){
+    sN=sN.filter(function(it){return it.id!=='ranking'});
+  }
   var jN=[{id:'dashboard',l:'Painel',e:'🏠',s:'Geral'},{id:'brackets',l:'Chaveamento',e:'🏟️',s:'Jogos'},{id:'schedule',l:'Agenda',e:'📅',s:'Jogos'},{id:'recursos',l:'Recursos',e:'📝',s:'Ações'}];
   var nav=S.role==='admin'?aN:S.role==='judge'?jN:sN;
   var gr={};nav.forEach(function(n){if(!gr[n.s])gr[n.s]=[];gr[n.s].push(n)});
@@ -2696,6 +2700,10 @@ function R(){
 
   var content=h('div',{'class':'content'});
   var pages={dashboard:pD,classes:pC,sports:pS,venues:pVenues,settings_page:function(c){S.page='dashboard';R();return;},enrollments:pEA,enroll:pES,brackets:pB,schedule:pSc,ranking:pR,conflicts:pConflicts,downloads:pDl,'import':pI,logins:pLogins,recursos:pRecursos,scoring_page:pScoring,individual:pIndividual,audit:pAudit};
+  // Guard: students cannot access enroll/recursos/blocked-ranking pages,
+  // even by typing the URL. Send them to the dashboard.
+  if(S.role==='student'&&(S.page==='enroll'||S.page==='recursos'))S.page='dashboard';
+  if(S.role==='student'&&S.rankingPublic===false&&S.page==='ranking')S.page='dashboard';
   (pages[S.page]||pD)(content);
 
   var mainDiv=h('div',{'class':'main'},topbar,content);
@@ -6873,6 +6881,19 @@ function renderLogin(root){
       return l.login.toLowerCase()===lg.toLowerCase()&&l.senha===pw;
     });
     if(found){
+      // Optional: respect S.studentHours = {from:'14:00', to:'20:00'}.
+      // Outside that window, students cannot log in. Admins/judges unaffected.
+      if(S.studentHours&&S.studentHours.from&&S.studentHours.to){
+        var _now=new Date();
+        var _nowM=_now.getHours()*60+_now.getMinutes();
+        function _toMin(t){var p=String(t).split(':');return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0)}
+        var _fromM=_toMin(S.studentHours.from);
+        var _toM=_toMin(S.studentHours.to);
+        if(_nowM<_fromM||_nowM>=_toM){
+          S.loginErr='Acesso de alunos liberado apenas das '+S.studentHours.from+' às '+S.studentHours.to+'. Tente novamente neste horário.';
+          R();return;
+        }
+      }
       var cl=S.cls.find(function(c){return c.id===found.ci});
       S.auth={role:'student',ci:found.ci,cn:found.cn,login:found.login};
       S.role='student';S.page='dashboard';S.loginErr='';R();return;
@@ -6947,6 +6968,78 @@ function pLogins(c){
   pwBody.appendChild(pwMsg);
   pwSection.appendChild(pwBody);
   c.appendChild(pwSection);
+
+  // ── Student access controls (hour window + ranking visibility) ──────────
+  var stuSection=h('div',{'class':'card',style:{marginBottom:'20px'}});
+  stuSection.appendChild(h('div',{'class':'card-h'},h('div',{'class':'card-t'},'👥 Acesso dos Alunos')));
+  var stuBody=h('div',{'class':'card-b'});
+
+  var hoursOn=!!(S.studentHours&&S.studentHours.from&&S.studentHours.to);
+  var fromInp=h('input',{'class':'fi',type:'time',value:S.studentHours&&S.studentHours.from||'14:00',style:{maxWidth:'130px'}});
+  var toInp=h('input',{'class':'fi',type:'time',value:S.studentHours&&S.studentHours.to||'20:00',style:{maxWidth:'130px'}});
+  var hoursToggle=h('input',{type:'checkbox',checked:hoursOn,style:{transform:'scale(1.3)',marginRight:'8px'}});
+
+  function _refreshHourFields(){
+    var enabled=hoursToggle.checked;
+    fromInp.disabled=!enabled;
+    toInp.disabled=!enabled;
+    fromInp.style.opacity=enabled?'1':'.4';
+    toInp.style.opacity=enabled?'1':'.4';
+  }
+  hoursToggle.onchange=function(){_refreshHourFields()};
+  _refreshHourFields();
+
+  var hourMsg=h('div',{style:{fontSize:'12px',marginTop:'8px',height:'18px'}});
+  stuBody.appendChild(h('div',{style:{padding:'10px 0',borderBottom:'1px solid var(--br)',marginBottom:'14px'}},
+    h('label',{style:{display:'flex',alignItems:'center',cursor:'pointer',fontSize:'13px',fontWeight:'600',marginBottom:'8px'}},
+      hoursToggle,'Restringir horário de acesso dos alunos'
+    ),
+    h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginBottom:'10px',marginLeft:'30px'}},
+      'Quando ativado, alunos só podem fazer login dentro da janela definida. Admins e juízes não são afetados.'),
+    h('div',{style:{display:'flex',gap:'10px',alignItems:'flex-end',flexWrap:'wrap',marginLeft:'30px'}},
+      h('div',{'class':'fg',style:{marginBottom:'0'}},h('label',{'class':'fl'},'De'),fromInp),
+      h('div',{'class':'fg',style:{marginBottom:'0'}},h('label',{'class':'fl'},'Até'),toInp),
+      h('button',{'class':'btn btn-p',onclick:function(){
+        if(!hoursToggle.checked){
+          S.studentHours=null;
+          hourMsg.style.color='#34d399';hourMsg.textContent='✅ Restrição desativada — alunos podem acessar a qualquer hora.';
+        } else {
+          if(!fromInp.value||!toInp.value){
+            hourMsg.style.color='#f87171';hourMsg.textContent='Preencha os dois horários.';return;
+          }
+          if(fromInp.value>=toInp.value){
+            hourMsg.style.color='#f87171';hourMsg.textContent='O horário inicial deve ser antes do final.';return;
+          }
+          S.studentHours={from:fromInp.value,to:toInp.value};
+          hourMsg.style.color='#34d399';hourMsg.textContent='✅ Janela de '+fromInp.value+' às '+toInp.value+' aplicada.';
+        }
+        scheduleSave();
+        logAudit('Acesso dos alunos','Janela horária: '+(S.studentHours?S.studentHours.from+'-'+S.studentHours.to:'sem restrição'));
+      }},'Salvar')
+    ),
+    hourMsg
+  ));
+
+  var rankToggle=h('input',{type:'checkbox',checked:S.rankingPublic!==false,style:{transform:'scale(1.3)',marginRight:'8px'}});
+  var rankMsg=h('div',{style:{fontSize:'12px',marginTop:'8px',height:'18px'}});
+  rankToggle.onchange=function(){
+    S.rankingPublic=rankToggle.checked;
+    rankMsg.style.color='#34d399';
+    rankMsg.textContent='✅ Ranking '+(S.rankingPublic?'visível':'oculto')+' para alunos.';
+    scheduleSave();
+    logAudit('Acesso dos alunos','Ranking: '+(S.rankingPublic?'público':'oculto'));
+  };
+  stuBody.appendChild(h('div',{style:{padding:'10px 0'}},
+    h('label',{style:{display:'flex',alignItems:'center',cursor:'pointer',fontSize:'13px',fontWeight:'600'}},
+      rankToggle,'Ranking visível para alunos'
+    ),
+    h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'4px',marginLeft:'30px'}},
+      'Quando desativado, a opção "Ranking" desaparece do menu do aluno e o acesso direto pela URL é bloqueado. Admins continuam vendo normalmente.'),
+    rankMsg
+  ));
+
+  stuSection.appendChild(stuBody);
+  c.appendChild(stuSection);
 
   // ── Additional admin logins ─────────────────────────────────────────────
   var aSection=h('div',{'class':'card',style:{marginBottom:'20px'}});
@@ -7984,7 +8077,8 @@ function getDbPayload(){
       ev:S.ev,logins:S.logins,judgeLogins:S.judgeLogins,adminLogins:S.adminLogins||[],auditLog:S.auditLog||[],
       recursos:S.recursos,adminPass:S.adminPass,
       thirdPlace:S.thirdPlace,appInfo:S.appInfo,
-      scoring:S.scoring,podiums:S.podiums,woLog:S.woLog
+      scoring:S.scoring,podiums:S.podiums,woLog:S.woLog,
+      studentHours:S.studentHours,rankingPublic:S.rankingPublic
     }),
     updated_at:new Date().toISOString()
   };
@@ -8054,7 +8148,7 @@ function loadFromSupabase(onDone){
     S.sb.syncing=false;
     if(rows&&rows.length&&rows[0].data){
       var d=JSON.parse(rows[0].data);
-      ['cls','spt','enr','brk','locs','ev','logins','judgeLogins','adminLogins','auditLog','recursos','adminPass','thirdPlace','appInfo','scoring','podiums','woLog'].forEach(function(k){
+      ['cls','spt','enr','brk','locs','ev','logins','judgeLogins','adminLogins','auditLog','recursos','adminPass','thirdPlace','appInfo','scoring','podiums','woLog','studentHours','rankingPublic'].forEach(function(k){
         if(d[k]!==undefined)S[k]=d[k];
       });
       // If school has a specific admin pass from master, use it
