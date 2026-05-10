@@ -1388,9 +1388,11 @@ function parseArenaPdfPages(pages,ambiente){
   function detectGender(text){
     if(!text)return null;
     var up=nrm(text);
-    // "MASC. e FEM." → Misto
-    if(/MASC\.?\s*E\s*FEM\.?/.test(up))return 'Misto';
-    if(up.indexOf('MASCULINO')>=0&&up.indexOf('FEMININO')>=0)return 'Misto';
+    // "MASC. e FEM." → DUPLICATE marker (will generate 2 brackets: one
+    // Masculino + one Feminino with identical matchups). This applies to
+    // sports like XADREZ where the same draw is played by both genders.
+    if(/MASC\.?\s*E\s*FEM\.?/.test(up))return '__DUPLICATE__';
+    if(up.indexOf('MASCULINO')>=0&&up.indexOf('FEMININO')>=0)return '__DUPLICATE__';
     if(up.indexOf('MASCULINO')>=0||/\bMASC\b/.test(up))return 'Masculino';
     if(up.indexOf('FEMININO')>=0||/\bFEM\b/.test(up))return 'Feminino';
     return null;
@@ -1737,6 +1739,74 @@ function parseArenaPdfPages(pages,ambiente){
     else if(et.indexOf('FINAL')>=0)phase='Final';
     brk._byPhase[phase].push(match);
     totalJogos++;
+  });
+
+  // ── PHASE 4: Expand __DUPLICATE__ brackets into Masculino + Feminino ──
+  // Some sports (notably XADREZ for 8º/9º ANO) have a single draw labelled
+  // "MASC. e FEM." in the PDF. Per design, this should generate two
+  // identical brackets — one Masculino, one Feminino — with the same
+  // matchups. We clone the bracket (deep), give all match IDs new values,
+  // and remap internal W_<id> references so the winner-of references
+  // remain valid within each clone.
+  function _newId(){return Math.random().toString(36).slice(2,9)}
+  function _cloneAndRemap(brk,newGender){
+    // Build id remap for all match ids in this bracket
+    var idMap={};
+    Object.keys(brk._byPhase).forEach(function(ph){
+      brk._byPhase[ph].forEach(function(m){idMap[m.id]=_newId()});
+    });
+    // Build the new sport entry (or reuse existing one)
+    var newSpKey=brk.sp.base+'|'+newGender;
+    if(!sptSet[newSpKey])sptSet[newSpKey]={base:brk.sp.base,gender:newGender,id:_newId()};
+    var newSp=sptSet[newSpKey];
+    // Build the cloned _byPhase
+    var newByPhase={Classificatorio:[],Semifinal:[],Final:[]};
+    Object.keys(brk._byPhase).forEach(function(ph){
+      brk._byPhase[ph].forEach(function(m){
+        function remapTeam(tid,slotMeta){
+          if(!tid)return tid;
+          // W_<id> → remap to the cloned match id; PH_xxx and turma ids stay as is
+          if(tid.indexOf('W_')===0){
+            var oldId=tid.slice(2);
+            if(idMap[oldId])return 'W_'+idMap[oldId];
+          }
+          return tid;
+        }
+        var newM={
+          id:idMap[m.id],
+          r:m.r,
+          t1:remapTeam(m.t1),
+          t2:remapTeam(m.t2),
+          s1:m.s1,s2:m.s2,w:m.w,
+          dt:m.dt,lc:m.lc,is3rd:m.is3rd||false,
+          _hora:m._hora
+        };
+        if(m._slot1)newM._slot1=remapTeam(m._slot1);
+        if(m._slot2)newM._slot2=remapTeam(m._slot2);
+        newByPhase[ph].push(newM);
+        totalJogos++;
+      });
+    });
+    var newBKey=newSp.id+'|'+brk.serie+'|'+newGender;
+    brackets[newBKey]={sp:newSp,gender:newGender,serie:brk.serie,rounds:[],_byPhase:newByPhase};
+  }
+  // Find all brackets marked for duplication
+  var dupKeys=Object.keys(brackets).filter(function(k){return brackets[k].gender==='__DUPLICATE__'});
+  dupKeys.forEach(function(bKey){
+    var brk=brackets[bKey];
+    // Subtract its original matches from totalJogos (we'll re-add via the clones)
+    Object.keys(brk._byPhase).forEach(function(ph){totalJogos-=brk._byPhase[ph].length});
+    // Clone into Masculino + Feminino
+    _cloneAndRemap(brk,'Masculino');
+    _cloneAndRemap(brk,'Feminino');
+    // Remove the original __DUPLICATE__ bracket
+    delete brackets[bKey];
+    // Also remove the __DUPLICATE__ sport entry if no other bracket uses it
+    var stillUsed=Object.values(brackets).some(function(b){return b.sp===brk.sp&&b.gender==='__DUPLICATE__'});
+    if(!stillUsed){
+      var spKey=brk.sp.base+'|__DUPLICATE__';
+      delete sptSet[spKey];
+    }
   });
 
   // Build rounds from _byPhase (Classif → Semi → Final), skipping empty ones
