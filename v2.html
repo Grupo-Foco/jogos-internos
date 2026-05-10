@@ -514,7 +514,7 @@ var XLSXMini = {
 
 var S={role:'admin',page:'dashboard',sbo:false,ev:{name:'Jogos Internos 2026'},cls:[],spt:[],enr:[],brk:{},locs:[],mod:null,bs:'',bc:'',rt:'class',theme:'dark',ir:null,bay:'',say:'',auth:null,logins:[],judgeLogins:[],adminLogins:[],auditLog:[],recursos:[],adminPass:'admin123',loginErr:'',thirdPlace:{},nextGameAlert:null,rankingAccess:{mode:'always',from:'07:00',to:'20:00'},appInfo:{author:'Rodolfo C. Pinheiro',contact:'rodolfinhocp@gmail.com',version:'4.0'},sb:{url:'https://omevoikikvkjshormjoh.supabase.co',key:'',enabled:true,status:'',syncing:false},
 // v4.0: Scoring, WO, Individual sports
-scoring:{p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1,pWin:3,pWO:-2}, // points per position + per win + WO penalty
+scoring:{p1:10,p2:8,p3:6,p4:4,p5:3,p6:2,p7:1,p8:1,pWin:0,pWO:-2}, // v2 (Arena): result-based bonuses (Win/Draw/Loss) are zero; only W.O. counts. Position-based points are the primary mechanism.
 podiums:[], // [{id,sportId,category,year,p1classId,p2classId,p3classId,notes}]
 woLog:[] // [{matchId,teamId,reason,date}]
 };
@@ -4816,8 +4816,11 @@ function calcClassDetail(classId){
       if(wins>0){
         var key=spName+' '+ct;
         var pWinV=(sc.pWin!=null?sc.pWin:3);
-        var winPts=wins*pWinV;
-        lines.push({desc:'⚽ <b>'+key+'</b> — '+wins+' vitória(s) × '+pWinV+' pts',pts:winPts});
+        if(pWinV!==0){
+          var winPts=wins*pWinV;
+          lines.push({desc:'⚽ <b>'+key+'</b> — '+wins+' vitória(s) × '+pWinV+' pts',pts:winPts});
+        }
+        // Count total wins regardless (used as tiebreaker info)
         totalWins+=wins;
       }
       if(draws>0){
@@ -8242,7 +8245,15 @@ function pScoring(c){
     var old2=S.scoring||{};var pl=[];
     for(var i=1;i<=8;i++){var v=old2['p'+i];if(v!=null)pl.push({key:'p'+i,label:i+'o Lugar',color:PLCL[i-1]||'#64748b',pts:v})}
     if(!pl.length)pl=[{key:'p1',label:'1o Lugar',color:PLCL[0],pts:10},{key:'p2',label:'2o Lugar',color:PLCL[1],pts:8},{key:'p3',label:'3o Lugar',color:PLCL[2],pts:6},{key:'p4',label:'4o Lugar',color:PLCL[3],pts:4}];
-    S.scoring={positions:pl,pWin:old2.pWin!=null?old2.pWin:3,pDraw:old2.pDraw!=null?old2.pDraw:1,pLoss:old2.pLoss!=null?old2.pLoss:0,pWO:old2.pWO!=null?old2.pWO:-2};
+    // v2 (Arena) rule: result-based bonuses are zero except W.O. penalty.
+    S.scoring={positions:pl,pWin:0,pDraw:0,pLoss:0,pWO:old2.pWO!=null?old2.pWO:-2};
+  } else {
+    // Schools that already had S.scoring from before this change might have
+    // non-zero pWin/pDraw/pLoss persisted. Force them to zero so they don't
+    // influence the ranking. The user can still see/edit W.O.
+    if(S.scoring.pWin!==0){S.scoring.pWin=0}
+    if(S.scoring.pDraw!==0){S.scoring.pDraw=0}
+    if(S.scoring.pLoss!==0){S.scoring.pLoss=0}
   }
   var sc=S.scoring;
   function mkRow(label,icon,color,val,onChange,onRemove){
@@ -8264,23 +8275,24 @@ function pScoring(c){
     });
     var addBtn=h('button',{'class':'btn btn-s',style:{marginTop:'8px',width:'100%'},onclick:function(){var ni=sc.positions.length;if(ni>=10)return;sc.positions.push({key:'p'+(ni+1),label:(ni+1)+'o Lugar',color:PLCL[ni]||'#64748b',pts:0});render()}},sc.positions.length<10?'+ Adicionar colocacao':'Maximo (10)');
     var fixedSec=h('div',{style:{marginTop:'14px',paddingTop:'10px',borderTop:'2px solid var(--br)'}});
-    fixedSec.appendChild(h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--tx3)',marginBottom:'8px',textTransform:'uppercase',letterSpacing:'.05em'}},'Por resultado de jogo'));
-    fixedSec.appendChild(mkRow('Vitoria','V','#34d399',sc.pWin!=null?sc.pWin:3,function(v){sc.pWin=v}));
-    fixedSec.appendChild(mkRow('Empate','E','#60a5fa',sc.pDraw!=null?sc.pDraw:1,function(v){sc.pDraw=v}));
-    fixedSec.appendChild(mkRow('Derrota','D','#6b7280',sc.pLoss!=null?sc.pLoss:0,function(v){sc.pLoss=v}));
+    fixedSec.appendChild(h('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--tx3)',marginBottom:'8px',textTransform:'uppercase',letterSpacing:'.05em'}},'W.O. (Walk Over)'));
     fixedSec.appendChild(mkRow('W.O.','W','#f87171',sc.pWO!=null?sc.pWO:-2,function(v){sc.pWO=v}));
-    var prev=h('div',{style:{marginTop:'10px',padding:'8px 12px',background:'rgba(139,92,246,.08)',borderRadius:'8px',fontSize:'11px',color:'var(--tx2)',lineHeight:'1.7'}});
-    var ex1=((sc.pWin||0)*3)+((sc.positions[0]?sc.positions[0].pts||0:0));
-    prev.innerHTML='<b>Exemplo:</b> 3 vitorias + 1o lugar = <b style="color:var(--pr)">'+ex1+' pts</b> | W.O. = <b style="color:var(--rd)">'+(sc.pWO||0)+' pts</b>';
+    // Force the unused result-based scoring fields to zero so they don't
+    // contribute to rankings or breakdowns in v2 (Arena scoring rules).
+    if(sc.pWin!==0)sc.pWin=0;
+    if(sc.pDraw!==0)sc.pDraw=0;
+    if(sc.pLoss!==0)sc.pLoss=0;
+    var prev=h('div',{style:{marginTop:'10px',padding:'8px 12px',background:'rgba(248,113,113,.08)',borderRadius:'8px',fontSize:'11px',color:'var(--tx2)',lineHeight:'1.7'}});
+    prev.innerHTML='<b>W.O. (Walk Over):</b> aplicado quando uma equipe nao comparece. Valor sugerido: <b style="color:var(--rd)">'+(sc.pWO||0)+' pts</b>';
     c.appendChild(h('div',{'class':'card',style:{marginBottom:'16px'}},
       h('div',{'class':'card-h'},h('div',{'class':'card-t'},'Pontuacao por Colocacao'),h('div',{style:{fontSize:'11px',color:'var(--tx3)'}},'x = remover | + = adicionar')),
       h('div',{'class':'card-b'},h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'10px',lineHeight:'1.6'}},'Defina pontos para cada colocacao final.'),posSection,addBtn)));
     c.appendChild(h('div',{'class':'card',style:{marginBottom:'16px'}},
       h('div',{'class':'card-h'},h('div',{'class':'card-t'},'Pontuacao por Resultado de Jogo')),
-      h('div',{'class':'card-b'},h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'10px',lineHeight:'1.6'}},'Pontos acumulados por jogo disputado.'),fixedSec,prev)));
+      h('div',{'class':'card-b'},h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'10px',lineHeight:'1.6'}},'Penalidade aplicada para equipes que nao comparecerem.'),fixedSec,prev)));
     c.appendChild(h('div',{style:{display:'flex',gap:'8px',marginBottom:'16px'}},
       h('button',{'class':'btn btn-p',onclick:function(){scheduleSave();var msg=document.createElement('div');msg.style.cssText='position:fixed;bottom:24px;right:24px;background:#34d399;color:#022c22;padding:10px 18px;border-radius:8px;font-weight:700;font-size:13px;z-index:9999;';msg.textContent='Pontuacao salva!';document.body.appendChild(msg);setTimeout(function(){if(msg.parentNode)msg.parentNode.removeChild(msg)},2000)}},'Salvar'),
-      h('button',{'class':'btn',onclick:function(){if(!confirm('Restaurar padrao?'))return;S.scoring={positions:[{key:'p1',label:'1o Lugar',color:PLCL[0],pts:10},{key:'p2',label:'2o Lugar',color:PLCL[1],pts:8},{key:'p3',label:'3o Lugar',color:PLCL[2],pts:6},{key:'p4',label:'4o Lugar',color:PLCL[3],pts:4}],pWin:3,pDraw:1,pLoss:0,pWO:-2};render()}},'Restaurar Padrao')));
+      h('button',{'class':'btn',onclick:function(){if(!confirm('Restaurar padrao?'))return;S.scoring={positions:[{key:'p1',label:'1o Lugar',color:PLCL[0],pts:10},{key:'p2',label:'2o Lugar',color:PLCL[1],pts:8},{key:'p3',label:'3o Lugar',color:PLCL[2],pts:6},{key:'p4',label:'4o Lugar',color:PLCL[3],pts:4}],pWin:0,pDraw:0,pLoss:0,pWO:-2};render()}},'Restaurar Padrao')));
 
     // ── TIEBREAKERS SECTION ────────────────────────────────────────────
     if(!S.tiebreakers)S.tiebreakers=['gd','headtohead','gp'];
@@ -9068,6 +9080,14 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
   loadFromSupabase(function(ok){
     MT.loading=false;
     MT.dataLoaded=true; // Flag: data has been loaded, safe to save
+    // v2 (Arena) scoring normalization: force Win/Draw/Loss bonuses to zero.
+    // Schools that loaded data from Supabase may have non-zero values
+    // persisted from before this rule existed. Only W.O. (pWO) is kept.
+    if(S.scoring){
+      if(S.scoring.pWin!==0)S.scoring.pWin=0;
+      if(S.scoring.pDraw!==0)S.scoring.pDraw=0;
+      if(S.scoring.pLoss!==0)S.scoring.pLoss=0;
+    }
     if(ok){
       console.log('=== STATE LOADED ===');
       console.log('Loaded: '+S.cls.length+' turmas, '+S.spt.length+' sports, '+S.enr.length+' enrollments, '+Object.keys(S.brk).length+' brackets');
@@ -9132,6 +9152,12 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
 } else {
   MT.loading=false;
   MT.dataLoaded=true;
+  // v2 (Arena) scoring normalization (no-Supabase path)
+  if(S.scoring){
+    if(S.scoring.pWin!==0)S.scoring.pWin=0;
+    if(S.scoring.pDraw!==0)S.scoring.pDraw=0;
+    if(S.scoring.pLoss!==0)S.scoring.pLoss=0;
+  }
 }
 </script>
 </body>
