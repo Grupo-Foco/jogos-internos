@@ -4647,7 +4647,7 @@ function pI(c){
   if(S.ir){var r=S.ir,tot=r.c+r.s+r.e,w=h('div',{});if(tot>0)w.appendChild(h('div',{'class':'iok',html:'✅ <b>OK!</b> 📚'+r.c+' turma(s) ⚽'+r.s+' esporte(s) 📋'+r.e+' inscrição(ões)'+(r.ev?' 🏆'+r.ev:'')}));if(r.wrn&&r.wrn.length)w.appendChild(h('div',{'class':'ier',html:'⚠️ <b>'+r.wrn.length+' aviso(s):</b><br>'+r.wrn.map(function(x){return'• '+x}).join('<br>')}));if(r.err&&r.err.length)w.appendChild(h('div',{'class':'ier',html:'❌ '+r.err.map(function(x){return'• '+x}).join('<br>')}));res=w}
 
   c.appendChild(h('div',{'class':'card'},
-    h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📤 Importar Planilha'),h('button',{'class':'btn btn-s btn-r',onclick:function(){if(confirm('Limpar TODOS os dados?')){S.cls=[];S.spt=[];S.enr=[];S.brk={};S.locs=[];S.ev={name:'Jogos Internos 2026'};S.ir=null;R()}}},'🗑️ Limpar')),
+    h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📤 Importar Planilha'),MT.isMaster?h('button',{'class':'btn btn-s btn-r',onclick:function(){if(confirm('Limpar TODOS os dados?')){S.cls=[];S.spt=[];S.enr=[];S.brk={};S.locs=[];S.ev={name:'Jogos Internos 2026'};S.ir=null;R()}}},'🗑️ Limpar'):null),
     h('div',{'class':'card-b'},
       h('div',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.7'},html:'Importa automaticamente:<br><b style="color:var(--pr)">Turmas</b>, <b style="color:var(--gn)">Esportes</b> e <b style="color:var(--pu)">Inscrições</b><br><span style="color:var(--am)">⚠️ Suporta .xlsx diretamente.</span>'}),
       dz,res
