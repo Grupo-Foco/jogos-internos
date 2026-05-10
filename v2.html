@@ -1340,6 +1340,482 @@ function parseArenaDocxHtml(html,ambiente){
   };
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// ARENA PDF PARSER (JOGAR 2026 / Colégio Arena format) — PDF version
+// ══════════════════════════════════════════════════════════════════════════
+// Parses bracket tables from PDF files in the same JOGAR/Arena layout used
+// for DOCX. Uses PDF.js (lazy-loaded from CDN) to extract text items with
+// their (x, y) positions, then rebuilds tabular structure by grouping items
+// into visual rows and resolving columns by x-distance.
+//
+// IMPORTANT design decisions (per project owner):
+//   • Each bracket carries the date of the page where it appeared
+//   • Section header gender ("PEBOLIM 9º ANO FEMININO") prevails over the
+//     in-table GÊNERO column when they conflict (PDF data entry errors)
+//   • "Sequencial" timing → empty hour
+//   • Pages with only "TODAS AS TURMAS" register the sport but no matches
+//     (so the activity exists in the system; events go to individuais)
+//   • Tolerates typos like "7 50min" (missing 'h')
+//   • "MASC. e FEM." → Misto category
+//
+// Returns the same shape as parseArenaDocxHtml.
+// ══════════════════════════════════════════════════════════════════════════
+function parseArenaPdfPages(pages,ambiente){
+  function u(){return Math.random().toString(36).slice(2,9)}
+  function nrm(s){return(s||'').replace(/[\u00b0\u00ba]/g,'\u00ba').replace(/\s+/g,' ').trim().toUpperCase()}
+  function cleanText(s){return String(s||'').replace(/\s+/g,' ').trim()}
+
+  var SPORTS=['FUT 7','FUTSAL','FUTEBOL','BASQUETE','HANDEBOL','HANDBALL','VOLEI','VÔLEI','VOLEIBOL','QUEIMADA','BANDEIRINHA','XADREZ','PEBOLIM','FUTMESA','TENIS DE MESA','TÊNIS DE MESA','PING PONG','ATLETISMO','NATACAO','NATAÇÃO','CONHECIMENTOS GERAIS','CALCULO MATEMATICO','CÁLCULO MATEMÁTICO','SOLETRANDO INGLES','SOLETRANDO INGLÊS','SOLETRANDO PORTUGUES','SOLETRANDO PORTUGUÊS','MINECRAFT','ARTES ARGILA'];
+  function detectSport(text){
+    if(!text)return null;
+    var up=nrm(text);
+    for(var i=0;i<SPORTS.length;i++){
+      var sp=nrm(SPORTS[i]);
+      if(up.indexOf(sp)>=0)return SPORTS[i];
+    }
+    return null;
+  }
+  function detectSeries(text){
+    if(!text)return null;
+    var up=nrm(text);
+    var mAno=up.match(/(\d+)\u00ba\s*ANO/);
+    if(mAno)return mAno[1]+'\u00ba ANO';
+    var mSer=up.match(/(\d+)[\u00baª]\s*S[ÉE]RIE/);
+    if(mSer)return mSer[1]+'\u00aa S\u00c9RIE';
+    if(/ENS\.?\s*M[EÉ]DIO/.test(up))return 'ENS. M\u00c9DIO';
+    return null;
+  }
+  function detectGender(text){
+    if(!text)return null;
+    var up=nrm(text);
+    // "MASC. e FEM." → Misto
+    if(/MASC\.?\s*E\s*FEM\.?/.test(up))return 'Misto';
+    if(up.indexOf('MASCULINO')>=0&&up.indexOf('FEMININO')>=0)return 'Misto';
+    if(up.indexOf('MASCULINO')>=0||/\bMASC\b/.test(up))return 'Masculino';
+    if(up.indexOf('FEMININO')>=0||/\bFEM\b/.test(up))return 'Feminino';
+    return null;
+  }
+  function detectLocation(text){
+    if(!text)return null;
+    var up=nrm(text);
+    var m=up.match(/\(([^)]+)\)/);
+    if(m){
+      var inner=m[1].replace(/\s+/g,' ').trim();
+      // Skip "(LIVRE)", "(F)", "(M)" — these aren't locations
+      if(/^(LIVRE|F|M|X)$/.test(inner))return null;
+      return inner;
+    }
+    if(/^(CAMPO|QUADRA|PÁTIO|PATIO|SALA|GIN[ÁA]SIO|PISCINA|PISTA)\b/.test(up))return up;
+    return null;
+  }
+  function detectDate(text){
+    if(!text)return null;
+    var m=(text||'').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if(!m)return null;
+    return m[1].padStart(2,'0')+'/'+m[2].padStart(2,'0')+'/'+m[3];
+  }
+  // Parse BR time. Tolerates: "7h20min", "7h", "8h", "7 50min" (missing h),
+  // "10h05min", "9 50min", "Sequencial" (returns '').
+  function parseTime(text){
+    if(!text)return '';
+    var t=nrm(text);
+    if(/SEQUENCIAL/.test(t))return '';
+    // Standard: 7h20min, 11h
+    var m=t.match(/(\d{1,2})\s*H(?:\s*(\d{1,2})\s*MIN)?/);
+    if(m){
+      var h=m[1].padStart(2,'0');
+      var mn=(m[2]||'00').padStart(2,'0');
+      return h+':'+mn;
+    }
+    // Typo-tolerant: "7 50min" or "9 50MIN" — number space number+min, no 'h'
+    var m2=t.match(/^(\d{1,2})\s+(\d{1,2})\s*MIN$/);
+    if(m2)return m2[1].padStart(2,'0')+':'+m2[2].padStart(2,'0');
+    return '';
+  }
+  function detectWinnerRef(text){
+    if(!text)return null;
+    var m=(text||'').match(/VENCEDOR(?:A)?\s+DO\s+JOGO\s*(\d+)/i);
+    return m?parseInt(m[1]):null;
+  }
+  // Convert "DD/MM/YYYY" + "HH:MM" to "YYYY-MM-DDTHH:MM" (datetime-local format)
+  function makeDt(dateStr,timeStr){
+    if(!dateStr||!timeStr)return '';
+    var p=dateStr.split('/');
+    if(p.length!==3)return '';
+    return p[2]+'-'+p[1]+'-'+p[0]+'T'+timeStr;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Phase 1: Group text items into visual rows (same y-coordinate ± tol)
+  // ──────────────────────────────────────────────────────────────────────
+  // pages[] = array of {pageNum, items: [{str, x, y, width}]}
+  // Returns flattened list of rows: [{pageNum, y, items:[{str,x,width}], text:'joined'}]
+  function groupRowsAcrossPages(pages){
+    var allRows=[];
+    pages.forEach(function(pg){
+      // Group items on this page by y (with tolerance for fonts at slightly
+      // different baselines — using ±2px is usually enough for clean PDFs).
+      var items=pg.items.slice().sort(function(a,b){return b.y-a.y || a.x-b.x});
+      var rows=[];
+      var current=null;
+      var Y_TOL=3;
+      items.forEach(function(it){
+        if(!it.str||!it.str.trim())return;
+        if(current && Math.abs(current.y-it.y)<=Y_TOL){
+          current.items.push(it);
+        } else {
+          if(current)rows.push(current);
+          current={pageNum:pg.pageNum,y:it.y,items:[it]};
+        }
+      });
+      if(current)rows.push(current);
+      // Sort items in each row by x ascending
+      rows.forEach(function(r){
+        r.items.sort(function(a,b){return a.x-b.x});
+        r.text=cleanText(r.items.map(function(i){return i.str}).join(' '));
+      });
+      allRows=allRows.concat(rows);
+    });
+    return allRows;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Phase 2: Detect column layout from the HORÁRIO header row and split
+  // each data row's items into the canonical columns (time, jogo, etapa,
+  // gen, t1, t2).
+  // ──────────────────────────────────────────────────────────────────────
+  // Given the items of a header row, returns {time, jogo, etapa, gen, t1, t2}
+  // where each value is the x-center of that header column.
+  function inferColumnCenters(headerRow){
+    var cols={};
+    headerRow.items.forEach(function(it){
+      var s=nrm(it.str);
+      var cx=it.x+(it.width||0)/2;
+      if(s==='HORARIO'||s==='HORÁRIO')cols.time=cx;
+      else if(s==='JOGO')cols.jogo=cx;
+      else if(s==='ETAPA')cols.etapa=cx;
+      else if(s==='GENERO'||s==='GÊNERO')cols.gen=cx;
+      else if(s==='TURMA'){
+        if(cols.t1==null)cols.t1=cx;
+        else cols.t2=cx;
+      }
+    });
+    return cols;
+  }
+  // For a data row + column centers, split items into the 6 columns by
+  // closest center. "x" cell between t1 and t2 is its own item; we drop it.
+  function splitRowByColumns(row,cols){
+    var out={time:'',jogo:'',etapa:'',gen:'',t1:'',t2:''};
+    var keys=['time','jogo','etapa','gen','t1','t2'];
+    var bins={time:[],jogo:[],etapa:[],gen:[],t1:[],t2:[]};
+    row.items.forEach(function(it){
+      var s=cleanText(it.str);
+      if(!s)return;
+      // Skip the "x" / "X" separator between t1 and t2
+      if(/^[xX]$/.test(s))return;
+      // Find nearest column center
+      var cx=it.x+(it.width||0)/2;
+      var bestKey=null,bestD=Infinity;
+      keys.forEach(function(k){
+        if(cols[k]==null)return;
+        var d=Math.abs(cx-cols[k]);
+        if(d<bestD){bestD=d;bestKey=k}
+      });
+      if(bestKey)bins[bestKey].push(s);
+    });
+    keys.forEach(function(k){out[k]=bins[k].join(' ').trim()});
+    return out;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Phase 3: Walk rows in order, maintaining context, emitting matches.
+  // ──────────────────────────────────────────────────────────────────────
+  var allRows=groupRowsAcrossPages(pages);
+
+  var turmasSet={};   // key=nrm(name) → {nm,id}
+  var sptSet={};      // key=base|gender → {base,gender,id}
+  var locsSet={};
+  var brackets={};
+  var totalJogos=0;
+  var parseErrors=[];
+
+  // Context tracked while walking
+  var ctxDate='';
+  var ctxSport=null;
+  var ctxSeries=null;
+  var ctxGender=null;
+  var ctxLocation=null;
+  var currentCols=null;          // column centers from latest header
+  var jogoIdMap={};              // bracket key → {jogoNum:matchId}
+
+  function ensureBracket(){
+    if(!ctxSport||!ctxSeries||!ctxGender)return null;
+    var sportKey=ctxSport+'|'+ctxGender;
+    if(!sptSet[sportKey])sptSet[sportKey]={base:ctxSport,gender:ctxGender,id:u()};
+    var sp=sptSet[sportKey];
+    var bKey=sp.id+'|'+ctxSeries+'|'+ctxGender;
+    if(!brackets[bKey]){
+      brackets[bKey]={sp:sp,gender:ctxGender,serie:ctxSeries,rounds:[],_jogoMap:{},_byPhase:{Classificatorio:[],Semifinal:[],Final:[]}};
+    }
+    return {bKey:bKey,brk:brackets[bKey]};
+  }
+  function registerTurma(t){
+    if(!t)return null;
+    if(detectWinnerRef(t)!=null)return null;
+    var key=nrm(t);
+    if(!key)return null;
+    if(!turmasSet[key])turmasSet[key]={nm:t.trim(),id:u()};
+    return turmasSet[key].id;
+  }
+
+  // Detect if this row looks like a section header line
+  // Possible forms:
+  //   "BASQUETE - 8º ANO MASCULINO (QUADRA 01)"
+  //   "PEBOLIM - 9º ANO FEMININO (PÁTIO)"
+  //   "8º ANO MASCULINO E FEMININO"  (Xadrez 8º/9º — series + gender, no sport)
+  //   "6º ANO FEMININO"              (Xadrez 6º — series + gender)
+  // Returns null or {sport?, series, gender, location?}
+  function detectHeader(text){
+    var up=nrm(text);
+    var sport=detectSport(up);
+    var series=detectSeries(up);
+    var gender=detectGender(up);
+    var location=detectLocation(up);
+    // Need at least series+gender (sport may be inherited from earlier header)
+    if(series&&gender)return{sport:sport,series:series,gender:gender,location:location};
+    return null;
+  }
+
+  // First pass: walk rows in order
+  allRows.forEach(function(row){
+    var t=row.text;
+    if(!t)return;
+    var up=nrm(t);
+
+    // ── Date row ──────────────────────────────────────────────────
+    var d=detectDate(t);
+    if(d){
+      ctxDate=d;
+      // Some date lines are standalone (e.g. "11/05/2026 - SEGUNDA-FEIRA")
+      // — keep walking; don't return because the same row might also
+      // contain a section header (rare, but possible).
+    }
+
+    // ── "PRÉVIA ENTRE AS EQUIPES" — informational, skip ────────────
+    if(/PR[ÉE]VIA\s+ENTRE\s+AS\s+EQUIPES/.test(up))return;
+
+    // ── HORÁRIO / TURMA ─ table header (locks columns) ─────────────
+    if(up.indexOf('HORARIO')>=0||up.indexOf('HORÁRIO')>=0){
+      var cols=inferColumnCenters(row);
+      // A real header has at least time + jogo + t1
+      if(cols.time!=null&&cols.jogo!=null&&cols.t1!=null){
+        currentCols=cols;
+        return;
+      }
+    }
+    // Standalone "TURMA" header (for Conhecimentos Gerais / TODAS AS TURMAS)
+    // — this is a degenerate header with only HORÁRIO and TURMA columns.
+    // We don't try to parse rows under it because they don't represent
+    // matches. We still register the sport so the activity exists.
+    if(up==='HORARIO TURMA'||up==='HORÁRIO TURMA'){
+      // Mark currentCols as null so subsequent rows aren't parsed as matches.
+      currentCols=null;
+      // Register sport if we have one in context
+      if(ctxSport&&ctxSeries&&ctxGender){
+        var sportKey=ctxSport+'|'+ctxGender;
+        if(!sptSet[sportKey])sptSet[sportKey]={base:ctxSport,gender:ctxGender,id:u()};
+      }
+      return;
+    }
+
+    // ── "TODAS AS TURMAS" row — register turma list, no match ──────
+    if(/TODAS\s+AS\s+TURMAS/.test(up)){
+      // Just ensure the sport exists in registry (no bracket, no matches).
+      if(ctxSport){
+        // Use current gender if known, else default 'Misto' (covers
+        // "ARTES ARGILA" pages that don't list gender).
+        var gen=ctxGender||'Misto';
+        var sportKey2=ctxSport+'|'+gen;
+        if(!sptSet[sportKey2])sptSet[sportKey2]={base:ctxSport,gender:gen,id:u()};
+      }
+      return;
+    }
+
+    // ── Section header (sport / series / gender / location) ───────
+    var hdr=detectHeader(t);
+    if(hdr){
+      if(hdr.sport)ctxSport=hdr.sport;
+      ctxSeries=hdr.series;
+      ctxGender=hdr.gender;     // section header gender PREVAILS (per design)
+      if(hdr.location){ctxLocation=hdr.location;locsSet[hdr.location]=true}
+      // Reset column lock — next HORÁRIO row will define new columns
+      currentCols=null;
+      return;
+    }
+    // Series-only line (e.g. "8º ANO" without gender) — appears in
+    // activity pages (Conhecimentos Gerais, Soletrando, etc) where the
+    // event is collective for the whole year, no gender split. Reset
+    // gender to Misto so the registered sport reflects that.
+    var soloSeries=detectSeries(t);
+    if(soloSeries && t.length<30 && !detectGender(t)){
+      ctxSeries=soloSeries;
+      ctxGender='Misto';
+      currentCols=null;
+      return;
+    }
+    // Sport-only line (e.g. "XADREZ", "CONHECIMENTOS GERAIS" alone) —
+    // these appear above the section header and announce the sport for
+    // the lines that follow. Update context but don't reset columns.
+    var soloSport=detectSport(t);
+    if(soloSport && t.length<60){
+      // Make sure it's really a "sport-only" line, not a long sentence that
+      // happens to contain a sport keyword. Series/gender absent confirms it.
+      if(!detectSeries(t)){
+        ctxSport=soloSport;
+        // Also pick up location if present in parentheses
+        var locSolo=detectLocation(t);
+        if(locSolo){ctxLocation=locSolo;locsSet[locSolo]=true}
+        return;
+      }
+    }
+    // No-op for unrecognized lines.
+
+    // ── Data row (only if columns are locked) ─────────────────────
+    if(!currentCols)return;
+    if(!ctxSport||!ctxSeries||!ctxGender)return;
+    if(!ctxDate){
+      // No date yet — skip this match (would be unusable). Log a warning.
+      parseErrors.push('Linha ignorada (sem data): '+t.slice(0,60));
+      return;
+    }
+
+    var split=splitRowByColumns(row,currentCols);
+    // Must have a Jogo number to count
+    var mJg=(split.jogo||'').match(/(\d+)/);
+    if(!mJg)return;
+    var jogoNum=parseInt(mJg[1]);
+    if(!jogoNum)return;
+    // Skip rows that are accidental repeats of the header row split
+    if(/^JOGO$/i.test(split.jogo))return;
+
+    var ensured=ensureBracket();
+    if(!ensured)return;
+    var bKey=ensured.bKey, brk=ensured.brk;
+
+    // Build match
+    var matchId=u();
+    brk._jogoMap[jogoNum]=matchId;
+
+    function resolveTeam(t){
+      if(!t)return 'PH_'+u();
+      var w=detectWinnerRef(t);
+      if(w!=null){
+        var srcId=brk._jogoMap[w];
+        if(srcId)return 'W_'+srcId;
+        return 'PH_'+u();
+      }
+      var tid=registerTurma(t);
+      return tid||('PH_'+u());
+    }
+    var t1id=resolveTeam(split.t1);
+    var t2id=resolveTeam(split.t2);
+    var hora=parseTime(split.time);
+    var dt=makeDt(ctxDate,hora);
+
+    var match={
+      id:matchId,r:0,t1:t1id,t2:t2id,
+      s1:null,s2:null,w:null,dt:dt,
+      lc:ctxLocation||'',is3rd:false,
+      _hora:hora
+    };
+    if(t1id.indexOf('W_')===0)match._slot1=t1id;
+    if(t2id.indexOf('W_')===0)match._slot2=t2id;
+
+    var et=nrm(split.etapa);
+    var phase='Classificatorio';
+    if(et.indexOf('SEMI')>=0)phase='Semifinal';
+    else if(et.indexOf('FINAL')>=0)phase='Final';
+    brk._byPhase[phase].push(match);
+    totalJogos++;
+  });
+
+  // Build rounds from _byPhase (Classif → Semi → Final), skipping empty ones
+  Object.keys(brackets).forEach(function(bKey){
+    var brk=brackets[bKey];
+    var phases=['Classificatorio','Semifinal','Final'];
+    phases.forEach(function(phase){
+      var arr=brk._byPhase[phase];
+      if(!arr.length)return;
+      brk.rounds.push({r:brk.rounds.length+1,label:phase,m:arr});
+    });
+    delete brk._byPhase;
+    delete brk._jogoMap;
+  });
+
+  return{
+    turmas:Object.values(turmasSet),
+    spt:Object.values(sptSet),
+    locs:Object.keys(locsSet).map(function(l){return{id:u(),nm:l}}),
+    brackets:brackets,
+    totalJogos:totalJogos,
+    _parseErrors:parseErrors
+  };
+}
+
+// Lazy-load PDF.js from CDN and extract raw text items by page.
+// Calls cb(err, pages) where pages = [{pageNum, items:[{str,x,y,width}]}].
+function _loadPdfJsAndExtract(arrayBuffer,cb){
+  function doExtract(){
+    try{
+      var pdfjsLib=window.pdfjsLib;
+      // Worker is required by PDF.js >= 3
+      if(pdfjsLib.GlobalWorkerOptions&&!pdfjsLib.GlobalWorkerOptions.workerSrc){
+        pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      }
+      var loadingTask=pdfjsLib.getDocument({data:arrayBuffer});
+      loadingTask.promise.then(function(pdf){
+        var nPages=pdf.numPages;
+        var pages=[];
+        var pending=nPages;
+        function onPage(pageNum,content){
+          var items=(content.items||[]).map(function(it){
+            // transform = [a,b,c,d,e,f] — e=x, f=y
+            var tr=it.transform||[1,0,0,1,0,0];
+            return{str:it.str||'',x:tr[4],y:tr[5],width:it.width||0};
+          });
+          pages.push({pageNum:pageNum,items:items});
+          pending--;
+          if(pending===0){
+            // Sort pages by pageNum
+            pages.sort(function(a,b){return a.pageNum-b.pageNum});
+            cb(null,pages);
+          }
+        }
+        for(var i=1;i<=nPages;i++){
+          (function(num){
+            pdf.getPage(num).then(function(page){
+              return page.getTextContent();
+            }).then(function(content){
+              onPage(num,content);
+            }).catch(function(err){
+              cb(err,null);
+            });
+          })(i);
+        }
+      }).catch(function(err){cb(err,null)});
+    }catch(e){cb(e,null)}
+  }
+  if(typeof window.pdfjsLib==='undefined'){
+    var sc=document.createElement('script');
+    sc.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    sc.onload=doExtract;
+    sc.onerror=function(){cb(new Error('Não foi possível carregar PDF.js. Verifique sua conexão.'),null)};
+    document.head.appendChild(sc);
+  }else{
+    doExtract();
+  }
+}
+
 function jimBracketDataToSchoolState(parsed,adminPass,year){
   year=year||'Jogos 2026';function u(){return Math.random().toString(36).slice(2,9)}
   var normYear=(year||'').replace(/[\u00b0\u00ba]/g,'\u00ba').replace(/\s+/g,' ').trim().toUpperCase();
@@ -2838,6 +3314,15 @@ function pD(c){
   ));
 
   var g=h('div',{'class':'g2'});
+  // Hide the two ranking cards from students when admin has blocked ranking visibility.
+  // The counters above (Turmas/Esportes/Equipes/Jogos) and the next-game alert
+  // remain visible. Admins and judges always see ranking. Students see it only
+  // when _isRankingVisible() is true.
+  if(S.role==='student'&&!_isRankingVisible()){
+    // Skip both ranking cards entirely.
+    c.appendChild(g);
+    return;
+  }
   // Turmas ranking - show by year with top 8
   var anos=getAnos();
   var crCard=h('div',{'class':'card'});
@@ -5611,8 +6096,22 @@ function mImportBrk(root){
         mImportBrk(root);
       };
       r3.readAsArrayBuffer(file);
+    } else if(ext==='pdf'){
+      // PDF — Arena format. Same flow as DOCX: ask ambient, then parse.
+      var r4=new FileReader();
+      r4.onload=function(ev){
+        S.mod._pdfBuffer=ev.target.result;
+        S.mod._pdfFilename=file.name;
+        var lower=(file.name||'').toLowerCase();
+        var guess='COL\u00c9GIO';
+        if(lower.indexOf('goias')>=0||lower.indexOf('goi\u00e1s')>=0||lower.indexOf('goi%c3%a1s')>=0)guess='GOI\u00c1S';
+        S.mod._pdfAmbiente=guess;
+        S.mod.step='pdf-ambiente';
+        mImportBrk(root);
+      };
+      r4.readAsArrayBuffer(file);
     } else {
-      S.mod.err='Use arquivo .html, .xlsx ou .docx';mImportBrk(root);
+      S.mod.err='Use arquivo .html, .xlsx, .docx ou .pdf';mImportBrk(root);
     }
   }
 
@@ -5651,6 +6150,37 @@ function mImportBrk(root){
     } else {
       doParse();
     }
+  }
+
+  // Load PDF.js dynamically and parse PDF with the chosen ambient label.
+  function processPdfWithAmbiente(ambiente){
+    var buf=S.mod._pdfBuffer;if(!buf)return;
+    _loadPdfJsAndExtract(buf,function(err,pages){
+      if(err){
+        S.mod.err='Erro ao ler PDF: '+(err.message||err);
+        S.mod.step='choose';mImportBrk(root);return;
+      }
+      try{
+        var p=parseArenaPdfPages(pages,ambiente);
+        if(!p||!Object.keys(p.brackets).length){
+          // Maybe the PDF only has activity-without-confronto pages
+          // (Conhecimentos Gerais, etc). In that case, sports may have been
+          // registered but no brackets. Still useful, so accept it.
+          if(p&&p.spt&&p.spt.length){
+            S.mod.parsed=p;S.mod.err='';S.mod.step='preview';mImportBrk(root);return;
+          }
+          S.mod.err='PDF sem confrontos detectados. Verifique se o arquivo segue o formato JOGAR (tabela com HORÁRIO/JOGO/ETAPA/GÊNERO/TURMA).';
+          S.mod.step='choose';mImportBrk(root);return;
+        }
+        if(p._parseErrors&&p._parseErrors.length){
+          console.warn('Arena PDF parser warnings:',p._parseErrors);
+        }
+        S.mod.parsed=p;S.mod.err='';S.mod.step='preview';mImportBrk(root);
+      }catch(e){
+        S.mod.err='Erro ao processar PDF: '+e.message;
+        S.mod.step='choose';mImportBrk(root);
+      }
+    });
   }
 
   // Apply imported brackets. mode = 'replace' (zero scores) | 'preserve' (keep matching results)
@@ -5829,14 +6359,15 @@ function mImportBrk(root){
     body.appendChild(h('ul',{style:{fontSize:'12px',color:'var(--tx2)',marginBottom:'14px',paddingLeft:'20px',lineHeight:'1.7'}},
       h('li',{},h('b',{},'.html'),' — dashboard JIM (formato Marista)'),
       h('li',{},h('b',{},'.xlsx'),' — planilha exportada do JIM'),
-      h('li',{},h('b',{style:{color:'var(--cy)'}},'.docx'),' — tabela JOGAR / Arena (formato Word)')
+      h('li',{},h('b',{style:{color:'var(--cy)'}},'.docx'),' — tabela JOGAR / Arena (formato Word)'),
+      h('li',{},h('b',{style:{color:'var(--pu)'}},'.pdf'),' — tabela JOGAR / Arena (formato PDF)')
     ));
-    var inp=h('input',{type:'file',accept:'.html,.xlsx,.xls,.docx',style:{display:'none'},id:'imp-brk-file'});
+    var inp=h('input',{type:'file',accept:'.html,.xlsx,.xls,.docx,.pdf',style:{display:'none'},id:'imp-brk-file'});
     inp.onchange=function(e){handleFile(e.target.files[0])};
     body.appendChild(inp);
     body.appendChild(h('button',{'class':'btn btn-p',style:{width:'100%',padding:'14px'},onclick:function(){
       document.getElementById('imp-brk-file').click();
-    }},'📂 Selecionar arquivo (.html, .xlsx ou .docx)'));
+    }},'📂 Selecionar arquivo (.html, .xlsx, .docx ou .pdf)'));
     if(S.mod.err){
       body.appendChild(h('div',{style:{marginTop:'12px',padding:'10px 14px',background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.3)',borderRadius:'8px',fontSize:'12px',color:'var(--rd)'}},'⚠️ '+S.mod.err));
     }
@@ -5888,6 +6419,54 @@ function mImportBrk(root){
       }},'Continuar →')
     ));
     md.appendChild(bodyA);
+  } else if(S.mod.step==='pdf-ambiente'){
+    md.appendChild(h('div',{'class':'md-h'},
+      h('h3',{},'🏟️ Ambiente do chaveamento (PDF)'),
+      h('button',{'class':'btn btn-s',onclick:close},'✕')
+    ));
+    var bodyP=h('div',{style:{padding:'18px 20px'}});
+    bodyP.appendChild(h('div',{style:{fontSize:'12px',color:'var(--tx3)',marginBottom:'8px'}},'Arquivo: ',h('b',{style:{color:'var(--tx2)'}},S.mod._pdfFilename||'')));
+    bodyP.appendChild(h('p',{style:{fontSize:'13px',color:'var(--tx2)',marginBottom:'14px',lineHeight:'1.5'}},
+      'Como uma escola pode usar mais de um ambiente físico (Colégio, Goiás, etc) com quadras e campos de mesmo nome, os locais serão prefixados com o nome do ambiente — ex: ',
+      h('b',{style:{color:'var(--cy)'}},'COLÉGIO - QUADRA 01'),'.'));
+    var ambValP={value:S.mod._pdfAmbiente||'COLÉGIO'};
+    function ambBtnP(label,val){
+      return h('button',{
+        'class':'btn',
+        style:{padding:'12px 14px',marginBottom:'6px',width:'100%',textAlign:'left',
+          background:ambValP.value===val?'rgba(167,139,250,.08)':'',
+          border:'1px solid '+(ambValP.value===val?'rgba(167,139,250,.4)':'var(--br)')},
+        onclick:function(){ambValP.value=val;S.mod._pdfAmbiente=val;mImportBrk(root)}
+      },
+        h('div',{style:{fontWeight:'700',fontSize:'13px'}},label),
+        h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginTop:'2px'}},'Locais ficarão como: ',h('span',{style:{color:'var(--pu)',fontFamily:'monospace'}},val+' - QUADRA 01'))
+      );
+    }
+    bodyP.appendChild(ambBtnP('🏫 Colégio (Arena)','COLÉGIO'));
+    bodyP.appendChild(ambBtnP('🏟️ Goiás Esporte Clube','GOIÁS'));
+    bodyP.appendChild(h('div',{style:{height:'1px',background:'var(--br)',margin:'10px 0'}}));
+    bodyP.appendChild(h('div',{style:{fontSize:'11px',color:'var(--tx3)',marginBottom:'4px'}},'Outro nome de ambiente:'));
+    var ambInpP=h('input',{'class':'fi',placeholder:'Ex: GINÁSIO MUNICIPAL',value:(['COLÉGIO','GOIÁS'].indexOf(ambValP.value)<0?ambValP.value:''),
+      oninput:function(e){if(e.target.value.trim())ambValP.value=e.target.value.trim().toUpperCase()}});
+    bodyP.appendChild(ambInpP);
+    bodyP.appendChild(h('div',{style:{marginTop:'10px',padding:'10px 12px',background:'rgba(167,139,250,.08)',border:'1px solid rgba(167,139,250,.25)',borderRadius:'8px',fontSize:'11px',color:'var(--tx2)',lineHeight:'1.5'}},
+      h('div',{style:{fontWeight:'700',marginBottom:'4px',color:'var(--pu)'}},'ℹ️ Sobre PDFs'),
+      'O PDF.js será carregado da internet na primeira vez (~1MB). Aguarde alguns segundos após clicar em Continuar.'));
+    if(S.mod.err){
+      bodyP.appendChild(h('div',{style:{marginTop:'12px',padding:'10px 14px',background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.3)',borderRadius:'8px',fontSize:'12px',color:'var(--rd)'}},'⚠️ '+S.mod.err));
+    }
+    bodyP.appendChild(h('div',{style:{marginTop:'14px',display:'flex',gap:'8px',justifyContent:'flex-end'}},
+      h('button',{'class':'btn btn-s',onclick:function(){S.mod.step='choose';S.mod._pdfBuffer=null;S.mod.err='';mImportBrk(root)}},'← Voltar'),
+      h('button',{'class':'btn btn-p',onclick:function(){
+        var amb=ambValP.value.trim();
+        if(!amb){S.mod.err='Digite ou escolha um ambiente.';mImportBrk(root);return}
+        S.mod._pdfAmbiente=amb;
+        S.mod.err='Carregando PDF.js e processando...';
+        mImportBrk(root);
+        setTimeout(function(){processPdfWithAmbiente(amb)},50);
+      }},'Continuar →')
+    ));
+    md.appendChild(bodyP);
   } else if(S.mod.step==='preview'){
     var p=S.mod.parsed;
     md.appendChild(h('div',{'class':'md-h'},
