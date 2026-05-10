@@ -1331,13 +1331,22 @@ function parseArenaDocxHtml(html,ambiente){
     var classifRound={r:0,label:'Classificatorio',m:[]};
     var semiRound={r:0,label:'Semifinal',m:[]};
     var finalRound={r:0,label:'Final',m:[]};
+    // Convert ctx.date ("DD/MM/YYYY") + hora ("HH:MM") to ISO datetime-local
+    // string "YYYY-MM-DDTHH:MM" so the renderer can show "Qua 13/05 11:05".
+    function _makeDt(dateBR,timeStr){
+      if(!dateBR||!timeStr)return '';
+      var p=String(dateBR).split('/');
+      if(p.length!==3)return '';
+      return p[2]+'-'+p[1]+'-'+p[0]+'T'+timeStr;
+    }
     tableRows.forEach(function(row){
       var t1id=resolveTeam(row.t1);
       var t2id=resolveTeam(row.t2);
       var hora=parseTime(row.time);
       var match={
         id:row._id,r:0,t1:t1id,t2:t2id,
-        s1:null,s2:null,w:null,dt:'',
+        s1:null,s2:null,w:null,
+        dt:_makeDt(ctx.date,hora),  // <-- now populated using ctx.date captured from page header
         lc:ctx.location||'',is3rd:false,
         _hora:hora
       };
