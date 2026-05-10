@@ -4215,28 +4215,121 @@ function pB(c){
         return anyShown?card:null;
       }
 
-      // Helper: extract ordered ids from finals (groups+final or semi+final)
-      function getFinalOrderedIds(){
+      // Helper: extract ordered team ids from the elimination tree, up to 8.
+      //
+      // Ordering rule (per project owner):
+      //   • Group 1 (1º-2º): final winner + final runner-up
+      //   • Group 2 (3º-4º): 3rd-place match if exists, else the two semifinal
+      //     losers ordered by PTS → SG → GP from the classification table
+      //   • Group 3 (5º-8º): losers from the quarterfinals (or, if there are
+      //     no quarters, from the classify rounds), ordered by PTS → SG → GP
+      //
+      // The optional `standingsSorted` argument is the sorted stats array
+      // returned by buildStandingsTable. It provides PTS/SG/GP and lets us
+      // resolve ties WITHIN a group. Without it, we fall back to bracket
+      // order (insertion order of matches).
+      function getFinalOrderedIds(standingsSorted){
         if(!finalRounds.length)return null;
-        // Find main final and 3rd place match in the LAST final round
+        function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
+
+        // Map teamId → rank in the classification (lower index = better).
+        // Used to order ties within a group by PTS → SG → GP, since the
+        // standingsSorted array already encodes that priority.
+        var rankIdx={};
+        if(standingsSorted&&standingsSorted.length){
+          standingsSorted.forEach(function(s,i){rankIdx[s.t]=i});
+        }
+        function sortByStandings(arr){
+          return arr.slice().sort(function(a,b){
+            var ra=(rankIdx[a]!=null)?rankIdx[a]:9999;
+            var rb=(rankIdx[b]!=null)?rankIdx[b]:9999;
+            return ra-rb;
+          });
+        }
+
+        // ── Group 1: 1st and 2nd place from the final round ─────────────
         var lastFR=finalRounds[finalRounds.length-1];
         var finalM=lastFR.m.find(function(m){return!m.is3rd});
         var thirdM=lastFR.m.find(function(m){return m.is3rd});
         if(!finalM||!finalM.w)return null;
-        function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
         var first=isReal(finalM.w)?finalM.w:null;
         var second=null;
         if(first){
           var s=finalM.w===finalM.t1?finalM.t2:finalM.t1;
           if(isReal(s))second=s;
         }
+
+        // ── Group 2: 3rd and 4th place ───────────────────────────────────
         var third=null,fourth=null;
         if(thirdM&&thirdM.w&&isReal(thirdM.w)){
+          // Explicit 3rd-place match was played
           third=thirdM.w;
           var f=thirdM.w===thirdM.t1?thirdM.t2:thirdM.t1;
           if(isReal(f))fourth=f;
+        } else {
+          // No 3rd-place match: derive from semifinal losers.
+          // The semifinal round is the one right before the final and has
+          // 2 matches (or label contains "SEMI").
+          var semiRound=null;
+          for(var i=finalRounds.length-1;i>=0;i--){
+            var fr=finalRounds[i];
+            if(fr===lastFR)continue;
+            var lbl=(fr.label||'').toUpperCase();
+            if(lbl.indexOf('SEMI')>=0||fr.m.length===2){semiRound=fr;break}
+          }
+          if(semiRound){
+            var semiLosers=[];
+            semiRound.m.forEach(function(m){
+              if(!m.w)return;
+              var loser=m.w===m.t1?m.t2:m.t1;
+              if(isReal(loser))semiLosers.push(loser);
+            });
+            var orderedSL=sortByStandings(semiLosers);
+            third=orderedSL[0]||null;
+            fourth=orderedSL[1]||null;
+          }
         }
-        return[first,second,third,fourth].filter(Boolean);
+
+        // ── Group 3: 5th to 8th place — quarterfinal losers (or first-round
+        //    classify losers if no quarters round exists) ──────────────────
+        var fifth=null,sixth=null,seventh=null,eighth=null;
+        // Locate quarterfinal round: label contains "QUART" or has 4 matches
+        // in the final-rounds chain, OR is the FIRST round when totalRounds=3.
+        var quarterRound=null;
+        for(var j=0;j<finalRounds.length;j++){
+          var fr2=finalRounds[j];
+          var lbl2=(fr2.label||'').toUpperCase();
+          if(fr2===lastFR)continue;
+          // Skip semifinal (already used)
+          if(lbl2.indexOf('SEMI')>=0||fr2.m.length===2)continue;
+          if(lbl2.indexOf('QUART')>=0||fr2.m.length===4){quarterRound=fr2;break}
+        }
+        // Fallback: classifyRounds first round if it has 4 matches and 8 teams
+        if(!quarterRound&&typeof classifyRounds!=='undefined'&&classifyRounds.length){
+          var firstClass=classifyRounds[0];
+          if(firstClass&&firstClass.m&&firstClass.m.length===4){
+            // Heuristic: the classify round IS the first elimination round
+            // for tournaments where classify+semi+final is a 3-stage chain
+            // (8 teams → 4 classifies → 2 semis → 1 final). This matches the
+            // Arena PDF format.
+            quarterRound=firstClass;
+          }
+        }
+        if(quarterRound){
+          var qLosers=[];
+          quarterRound.m.forEach(function(m){
+            if(!m.w)return;
+            var loser=m.w===m.t1?m.t2:m.t1;
+            if(isReal(loser))qLosers.push(loser);
+          });
+          var orderedQL=sortByStandings(qLosers);
+          fifth=orderedQL[0]||null;
+          sixth=orderedQL[1]||null;
+          seventh=orderedQL[2]||null;
+          eighth=orderedQL[3]||null;
+        }
+
+        return[first,second,third,fourth,fifth,sixth,seventh,eighth].filter(Boolean);
       }
 
       if(finalRounds.length&&showFinals){
@@ -4290,22 +4383,52 @@ function pB(c){
           main.appendChild(finalWrap);
         });
 
-        // Standings tables for groups
+        // ── SIDE-BY-SIDE LAYOUT: Classificação (left) + Classificação Final (right)
+        // Two cards rendered next to each other (50/50) on screens >700px;
+        // stacks vertically on mobile. The helper takes the two children and
+        // strips the marginTop they used to set (the grid spacing handles it).
+        function _sideBySidePair(leftCard,rightCard){
+          if(!leftCard&&!rightCard)return null;
+          if(!leftCard)return rightCard;
+          if(!rightCard)return leftCard;
+          // Remove marginTop from individual cards (the wrapper handles spacing)
+          if(leftCard.style)leftCard.style.marginTop='0';
+          if(rightCard.style)rightCard.style.marginTop='0';
+          var wrap=h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(360px,1fr))',gap:'14px',marginTop:'14px',alignItems:'start'}});
+          wrap.appendChild(leftCard);
+          wrap.appendChild(rightCard);
+          return wrap;
+        }
+
+        // Standings tables for groups — possibly paired with Classificação Final
         if(classifyRounds.length===1){
           var st=buildStandingsTable(classifyRounds[0],'');
-          if(st&&st.tbl)main.appendChild(st.tbl);
+          var orderedIds=getFinalOrderedIds(st&&st.sorted);
+          var fcCard=(orderedIds&&orderedIds.length)?buildFinalClassificationCard(orderedIds):null;
+          var paired=_sideBySidePair(st&&st.tbl,fcCard);
+          if(paired)main.appendChild(paired);
         } else if(classifyRounds.length>1){
+          // Multiple groups: render each standings table, then put the
+          // Final Classification card at the end on its own row.
+          // We merge all sorted arrays so getFinalOrderedIds has full ranking.
+          var allSorted=[];
           classifyRounds.forEach(function(rd){
             var st=buildStandingsTable(rd,rd.label||'');
             if(st&&st.tbl)main.appendChild(st.tbl);
+            if(st&&st.sorted)allSorted=allSorted.concat(st.sorted);
           });
-        }
-
-        // Final classification card (1º/2º/3º/4º from the actual final results)
-        var orderedIds=getFinalOrderedIds();
-        if(orderedIds&&orderedIds.length){
-          var fcCard=buildFinalClassificationCard(orderedIds);
-          if(fcCard)main.appendChild(fcCard);
+          var orderedIdsM=getFinalOrderedIds(allSorted);
+          if(orderedIdsM&&orderedIdsM.length){
+            var fcCardM=buildFinalClassificationCard(orderedIdsM);
+            if(fcCardM)main.appendChild(fcCardM);
+          }
+        } else {
+          // No classify rounds, only final round — show Final card alone
+          var orderedIdsF=getFinalOrderedIds();
+          if(orderedIdsF&&orderedIdsF.length){
+            var fcCardF=buildFinalClassificationCard(orderedIdsF);
+            if(fcCardF)main.appendChild(fcCardF);
+          }
         }
       } else if(finalRounds.length&&!showFinals){
         // Notice: final will be generated after classify
@@ -4314,14 +4437,26 @@ function pB(c){
         ));
       } else if(classifyRounds.length===1&&!finalRounds.length){
         // PURE RODIZIO (no final round): always show standings;
-        // when all matches done, also show Classificação Final card.
+        // when all matches done, also show Classificação Final card side-by-side.
+        function _sideBySidePairR(leftCard,rightCard){
+          if(!leftCard&&!rightCard)return null;
+          if(!leftCard)return rightCard;
+          if(!rightCard)return leftCard;
+          if(leftCard.style)leftCard.style.marginTop='0';
+          if(rightCard.style)rightCard.style.marginTop='0';
+          var wrap=h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(360px,1fr))',gap:'14px',marginTop:'14px',alignItems:'start'}});
+          wrap.appendChild(leftCard);
+          wrap.appendChild(rightCard);
+          return wrap;
+        }
         var stR=buildStandingsTable(classifyRounds[0],'');
-        if(stR&&stR.tbl)main.appendChild(stR.tbl);
+        var fcR=null;
         if(allClassifyDone&&stR&&stR.sorted&&stR.sorted.length){
           var orderedR=stR.sorted.map(function(s){return s.t});
-          var fcR=buildFinalClassificationCard(orderedR);
-          if(fcR)main.appendChild(fcR);
+          fcR=buildFinalClassificationCard(orderedR);
         }
+        var pairedR=_sideBySidePairR(stR&&stR.tbl,fcR);
+        if(pairedR)main.appendChild(pairedR);
       } else if(classifyRounds.length>1&&!finalRounds.length){
         // Multiple classify rounds without final (uncommon but supported)
         classifyRounds.forEach(function(rd){
