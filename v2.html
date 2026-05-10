@@ -252,6 +252,35 @@ tr:last-child td{border-bottom:0}
   .mob-cards td:last-child{margin-top:6px;padding-top:8px;border-top:1px solid var(--bd);justify-content:flex-end}
   .mob-cards td:empty{display:none}
 }
+/* CLASSIFICATION TABLE (V/E/D/GP/SG/PTS) — collapse on narrow screens.
+   On mobile, the 8-column grid (30px/1fr/50px×4/60px/60px ≈ 350px fixed) overflows
+   small devices. Hide E, D and GP, keep #, Equipe, V, SG, PTS to fit comfortably.
+   On tablets (601–768px) we keep all columns but trim widths. */
+@media(max-width:600px){
+  .clf-row{grid-template-columns:26px 1fr 28px 40px 42px !important;gap:6px !important;padding:8px 10px !important}
+  .clf-row .clf-e,.clf-row .clf-d,.clf-row .clf-gp{display:none !important}
+  .clf-row .clf-team{font-size:12px !important}
+}
+@media(min-width:601px) and (max-width:768px){
+  .clf-row{grid-template-columns:28px 1fr 36px 36px 36px 40px 50px 50px !important;gap:4px !important}
+}
+
+/* FINAL CLASSIFICATION CARD — 1st pillar 130px shrinks the team name area to nothing
+   on mobile. Reduce label column on small screens. */
+@media(max-width:600px){
+  .fc-row{grid-template-columns:90px 1fr 64px !important;gap:6px !important;padding:8px 10px !important}
+  .fc-row .fc-lbl{font-size:10px !important}
+  .fc-row .fc-pts{font-size:12px !important}
+}
+
+/* MATCH ROWS — when the inline time/loc string is long (e.g. "Qua 13/05 10:00 QUADRA 01"),
+   on mobile move it to a second line under the teams instead of inline.
+   The .mt-meta span is hidden inline on mobile and replaced with a block .mt-meta-blk. */
+@media(max-width:600px){
+  .mt-row{grid-template-columns:32px 1fr 72px !important;gap:6px !important;padding:8px 10px !important}
+  .mt-teams{flex-wrap:wrap !important}
+  .mt-meta{display:block !important;width:100% !important;margin-left:0 !important;margin-top:3px !important;font-size:10px !important}
+}
 </style>
 </head>
 <body>
@@ -4085,7 +4114,7 @@ function pB(c){
       })});
 
       var tbl=allMatches.length?h('div',{'class':'card'}):h('div');
-      var hdr=h('div',{style:{display:'grid',gridTemplateColumns:'40px 1fr 110px',gap:'8px',padding:'6px 12px',fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',borderBottom:'1px solid var(--br)'}},
+      var hdr=h('div',{'class':'mt-row',style:{display:'grid',gridTemplateColumns:'40px 1fr 110px',gap:'8px',padding:'6px 12px',fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',borderBottom:'1px solid var(--br)'}},
         h('span',{},'#'),h('span',{},'Confronto'),h('span',{style:{textAlign:'right'}},'Resultado'));
       tbl.appendChild(hdr);
       var tbody=h('div',{style:{maxHeight:'460px',overflowY:'auto'}});
@@ -4104,6 +4133,7 @@ function pB(c){
         var hasRes=m.s1!=null&&m.s2!=null;
         var can=(S.role==='admin'||S.role==='judge')&&!isPH1&&!isPH2;
         var row=h('div',{
+          'class':'mt-row',
           style:{display:'grid',gridTemplateColumns:'40px 1fr 110px',gap:'8px',padding:'8px 12px',borderBottom:'1px solid var(--br)',cursor:can?'pointer':'default',background:hasRes?'rgba(52,211,153,.04)':''},
           onclick:can?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null
         });
@@ -4113,14 +4143,14 @@ function pB(c){
         var ECOLS={'ROXO':'#8b5cf6','VERDE':'#22c55e','VERMELHO':'#ef4444','AMARELO':'#eab308','AZUL':'#3b82f6','ROSA':'#ec4899','PRETO':'#374151','CINZA':'#6b7280','LARANJA':'#f97316'};
         function ec(nm){var col='var(--tx3)';var u=(nm||'').toUpperCase();Object.entries(ECOLS).forEach(function(e){if(u.indexOf(e[0])>=0)col=e[1]});return col;}
         function dot(nm){return h('span',{style:{width:'8px',height:'8px',borderRadius:'50%',background:ec(nm),flexShrink:'0',display:'inline-block'}});}
-        var teams=h('div',{style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'13px',flexWrap:'wrap'}});
+        var teams=h('div',{'class':'mt-teams',style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'13px',flexWrap:'wrap',minWidth:'0'}});
         teams.appendChild(dot(n1));
         teams.appendChild(h('span',{style:{fontWeight:'500',color:'var(--tx)'}},n1));
         teams.appendChild(h('span',{style:{color:'var(--tx3)',fontSize:'11px'}},'x'));
         teams.appendChild(dot(n2));
         teams.appendChild(h('span',{style:{fontWeight:'500',color:'var(--tx)'}},n2));
         var _gt1=formatGameTime(m);
-        if(_gt1)teams.appendChild(h('span',{style:{fontSize:'10px',color:'var(--tx3)',marginLeft:'6px'}},_gt1));
+        if(_gt1)teams.appendChild(h('span',{'class':'mt-meta',style:{fontSize:'10px',color:'var(--tx3)',marginLeft:'6px'}},_gt1));
         row.appendChild(teams);
 
         var res=h('div',{style:{textAlign:'right',fontSize:'13px',fontWeight:'700',color:hasRes?'var(--gn)':'var(--tx3)'}});
@@ -4202,28 +4232,28 @@ function pB(c){
         tbl.appendChild(h('div',{'class':'card-h'},h('div',{'class':'card-t'},'📊 Classificação'+(label?' — '+label:''))));
         var ECOLS={'ROXO':'#8b5cf6','VERDE':'#22c55e','VERMELHO':'#ef4444','AMARELO':'#eab308','AZUL':'#3b82f6','ROSA':'#ec4899','PRETO':'#374151','CINZA':'#6b7280','LARANJA':'#f97316'};
         function ec(nm){var col='var(--tx3)';var u=(nm||'').toUpperCase();Object.entries(ECOLS).forEach(function(e){if(u.indexOf(e[0])>=0)col=e[1]});return col;}
-        var hdr=h('div',{style:{display:'grid',gridTemplateColumns:'30px 1fr 50px 50px 50px 50px 60px 60px',gap:'4px',padding:'6px 12px',fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',borderBottom:'1px solid var(--br)'}},
+        var hdr=h('div',{'class':'clf-row',style:{display:'grid',gridTemplateColumns:'30px 1fr 50px 50px 50px 50px 60px 60px',gap:'4px',padding:'6px 12px',fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',borderBottom:'1px solid var(--br)'}},
           h('span',{},'#'),h('span',{},'Equipe'),
           h('span',{style:{textAlign:'center'}},'V'),
-          h('span',{style:{textAlign:'center'}},'E'),
-          h('span',{style:{textAlign:'center'}},'D'),
-          h('span',{style:{textAlign:'center'}},'GP'),
+          h('span',{'class':'clf-e',style:{textAlign:'center'}},'E'),
+          h('span',{'class':'clf-d',style:{textAlign:'center'}},'D'),
+          h('span',{'class':'clf-gp',style:{textAlign:'center'}},'GP'),
           h('span',{style:{textAlign:'center'}},'SG'),
           h('span',{style:{textAlign:'right',color:'var(--cy)'}},'PTS'));
         tbl.appendChild(hdr);
         sorted.forEach(function(s,i){
           var nm=tName(s.t);
           var posColor=i===0?'var(--am)':i===1?'#94a3b8':i===2?'#fb923c':'var(--tx3)';
-          var row=h('div',{style:{display:'grid',gridTemplateColumns:'30px 1fr 50px 50px 50px 50px 60px 60px',gap:'4px',padding:'8px 12px',borderBottom:'1px solid var(--br)',background:i===0?'rgba(251,191,36,.06)':''}},
+          var row=h('div',{'class':'clf-row',style:{display:'grid',gridTemplateColumns:'30px 1fr 50px 50px 50px 50px 60px 60px',gap:'4px',padding:'8px 12px',borderBottom:'1px solid var(--br)',background:i===0?'rgba(251,191,36,.06)':''}},
             h('span',{style:{fontWeight:'700',color:posColor}},(i+1)+'º'),
-            h('span',{style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px'}},
+            h('span',{'class':'clf-team',style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',minWidth:'0',overflow:'hidden'}},
               h('span',{style:{width:'8px',height:'8px',borderRadius:'50%',background:ec(nm),flexShrink:'0'}}),
-              h('span',{},nm)
+              h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},nm)
             ),
             h('span',{style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px'}},''+s.w),
-            h('span',{style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px',color:'var(--tx3)'}},''+s.d),
-            h('span',{style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px',color:'var(--tx3)'}},''+s.l),
-            h('span',{style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px'}},''+s.gp),
+            h('span',{'class':'clf-e',style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px',color:'var(--tx3)'}},''+s.d),
+            h('span',{'class':'clf-d',style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px',color:'var(--tx3)'}},''+s.l),
+            h('span',{'class':'clf-gp',style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px'}},''+s.gp),
             h('span',{style:{textAlign:'center',fontFamily:"'Space Mono'",fontSize:'12px',color:s.gd>0?'var(--gn)':s.gd<0?'var(--rd)':'var(--tx3)'}},(s.gd>0?'+':'')+s.gd),
             h('span',{style:{textAlign:'right',fontFamily:"'Space Mono'",fontSize:'14px',fontWeight:'800',color:'var(--cy)'}},''+s.pts)
           );
@@ -4255,13 +4285,13 @@ function pB(c){
           if(!tid)return;
           var nm=tName(tid);
           var pts=pospts(i+1);
-          var row=h('div',{style:{display:'grid',gridTemplateColumns:'130px 1fr 80px',gap:'10px',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid var(--br)',background:i===0?'rgba(251,191,36,.06)':i===1?'rgba(148,163,184,.05)':i===2?'rgba(251,146,60,.05)':''}},
-            h('span',{style:{fontWeight:'700',fontSize:'12px',color:posCol[i]||'var(--tx3)'}},posLbl[i]||((i+1)+'º Lugar')),
-            h('span',{style:{display:'flex',alignItems:'center',gap:'8px',fontSize:'14px',fontWeight:'600'}},
+          var row=h('div',{'class':'fc-row',style:{display:'grid',gridTemplateColumns:'130px 1fr 80px',gap:'10px',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid var(--br)',background:i===0?'rgba(251,191,36,.06)':i===1?'rgba(148,163,184,.05)':i===2?'rgba(251,146,60,.05)':''}},
+            h('span',{'class':'fc-lbl',style:{fontWeight:'700',fontSize:'12px',color:posCol[i]||'var(--tx3)'}},posLbl[i]||((i+1)+'º Lugar')),
+            h('span',{style:{display:'flex',alignItems:'center',gap:'8px',fontSize:'14px',fontWeight:'600',minWidth:'0',overflow:'hidden'}},
               h('span',{style:{width:'10px',height:'10px',borderRadius:'50%',background:ec(nm),flexShrink:'0'}}),
-              h('span',{},nm)
+              h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},nm)
             ),
-            h('span',{style:{textAlign:'right',fontFamily:"'Space Mono'",fontSize:'14px',fontWeight:'800',color:pts>0?'var(--gn)':pts<0?'var(--rd)':'var(--tx3)'}},(pts>0?'+':'')+pts+' pts')
+            h('span',{'class':'fc-pts',style:{textAlign:'right',fontFamily:"'Space Mono'",fontSize:'14px',fontWeight:'800',color:pts>0?'var(--gn)':pts<0?'var(--rd)':'var(--tx3)'}},(pts>0?'+':'')+pts+' pts')
           );
           card.appendChild(row);
           anyShown=true;
@@ -4616,13 +4646,13 @@ function pB(c){
             var nm=tName(tid);
             var pts=pospts2(i+1);
             var bg=i===0?'rgba(251,191,36,.06)':i===1?'rgba(148,163,184,.05)':i===2?'rgba(251,146,60,.05)':'';
-            var row=h('div',{style:{display:'grid',gridTemplateColumns:'130px 1fr 80px',gap:'10px',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid var(--br)',background:bg}},
-              h('span',{style:{fontWeight:'700',fontSize:'12px',color:posCol2[i]||'var(--tx3)'}},posLbl2[i]||((i+1)+'º Lugar')),
-              h('span',{style:{display:'flex',alignItems:'center',gap:'8px',fontSize:'14px',fontWeight:'600'}},
+            var row=h('div',{'class':'fc-row',style:{display:'grid',gridTemplateColumns:'130px 1fr 80px',gap:'10px',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid var(--br)',background:bg}},
+              h('span',{'class':'fc-lbl',style:{fontWeight:'700',fontSize:'12px',color:posCol2[i]||'var(--tx3)'}},posLbl2[i]||((i+1)+'º Lugar')),
+              h('span',{style:{display:'flex',alignItems:'center',gap:'8px',fontSize:'14px',fontWeight:'600',minWidth:'0',overflow:'hidden'}},
                 h('span',{style:{width:'10px',height:'10px',borderRadius:'50%',background:ec3(nm),flexShrink:'0'}}),
-                h('span',{},nm)
+                h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},nm)
               ),
-              h('span',{style:{textAlign:'right',fontFamily:"'Space Mono'",fontSize:'14px',fontWeight:'800',color:pts>0?'var(--gn)':pts<0?'var(--rd)':'var(--tx3)'}},(pts>0?'+':'')+pts+' pts')
+              h('span',{'class':'fc-pts',style:{textAlign:'right',fontFamily:"'Space Mono'",fontSize:'14px',fontWeight:'800',color:pts>0?'var(--gn)':pts<0?'var(--rd)':'var(--tx3)'}},(pts>0?'+':'')+pts+' pts')
             );
             fcCardTree.appendChild(row);
           });
