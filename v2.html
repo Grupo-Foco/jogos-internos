@@ -2331,6 +2331,19 @@ function detectTurmaFromFilename(filename){
     var mLetter=up.match(/\b\d+\s*[ºO°]?\s*ANO\s+([A-H])\b/);
     if(mLetter)color=mLetter[1];
   }
+  // JOGAR/Arena filename format: number + ordinal + letter WITHOUT "ANO" in
+  // between. Examples: "9° A", "7°C", "8°H", "6° B". The serie regex above
+  // already failed on these (no "ANO"/"SÉRIE" word), so we extract both
+  // series and letter from a single pattern here. Single uppercase letter
+  // A-H is the class identifier in the Arena layout (8 turmas per year).
+  if(!serie&&!color){
+    // Allow optional space between ordinal and letter: "9° A" or "9°A"
+    var mArenaLetter=up.match(/(\d+)\s*[ºO°]\s*([A-H])\b/);
+    if(mArenaLetter){
+      serie=mArenaLetter[1]+'º ANO';
+      color=mArenaLetter[2];
+    }
+  }
   if(!serie&&!color)return null;
   if(serie&&color)return serie+' '+color;
   return serie||color;
