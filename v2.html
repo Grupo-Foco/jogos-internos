@@ -3728,6 +3728,42 @@ function pES(c){
 function pB(c){
   var ap=S.enr.filter(function(e){return e.st==='approved'});
 
+  // Format match time metadata into a compact, human-friendly string.
+  // Combines weekday + date (from m.dt) with hour and location.
+  // Examples:
+  //   m.dt='2026-05-13T10:00', m._hora='10:00', m.lc='PÁTIO'
+  //     → "Qua 13/05 10:00 PÁTIO"
+  //   m._hora='10:00', m.lc='PÁTIO' (no dt)
+  //     → "10:00 PÁTIO"
+  //   m.dt='2026-05-13T10:00' alone
+  //     → "Qua 13/05 10:00"
+  function formatGameTime(m){
+    if(!m)return '';
+    var parts=[];
+    var hourFromDt='';
+    // Try to derive day-of-week + dd/mm from m.dt (ISO datetime-local)
+    if(m.dt){
+      var dts=String(m.dt);
+      // Match "YYYY-MM-DD" at start (covers both "2026-05-13" and "2026-05-13T10:00")
+      var md=dts.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if(md){
+        // Construct using UTC to avoid timezone shifts changing the weekday
+        var dt=new Date(Date.UTC(parseInt(md[1]),parseInt(md[2])-1,parseInt(md[3])));
+        if(!isNaN(dt.getTime())){
+          var dows=['Dom','Seg','Ter','Qua','Qui','Sex','Sab'];
+          parts.push(dows[dt.getUTCDay()]+' '+md[3]+'/'+md[2]);
+        }
+      }
+      // Also try to pull HH:MM from the T part of dt as a fallback for _hora
+      var mt=dts.match(/T(\d{2}):(\d{2})/);
+      if(mt)hourFromDt=mt[1]+':'+mt[2];
+    }
+    if(m._hora)parts.push(m._hora);
+    else if(hourFromDt)parts.push(hourFromDt);
+    if(m.lc)parts.push(m.lc);
+    return parts.join(' ');
+  }
+
   // Year selection
   var anos=getAnos();
   if(!S.bay||anos.indexOf(S.bay)<0)S.bay=anos[0]||'';
@@ -4083,7 +4119,8 @@ function pB(c){
         teams.appendChild(h('span',{style:{color:'var(--tx3)',fontSize:'11px'}},'x'));
         teams.appendChild(dot(n2));
         teams.appendChild(h('span',{style:{fontWeight:'500',color:'var(--tx)'}},n2));
-        if(m._hora||m.lc)teams.appendChild(h('span',{style:{fontSize:'10px',color:'var(--tx3)',marginLeft:'6px'}},([m._hora,m.lc].filter(Boolean).join(' '))));
+        var _gt1=formatGameTime(m);
+        if(_gt1)teams.appendChild(h('span',{style:{fontSize:'10px',color:'var(--tx3)',marginLeft:'6px'}},_gt1));
         row.appendChild(teams);
 
         var res=h('div',{style:{textAlign:'right',fontSize:'13px',fontWeight:'700',color:hasRes?'var(--gn)':'var(--tx3)'}});
@@ -4115,7 +4152,7 @@ function pB(c){
         rd.m.forEach(function(mm){
           [mm.t1,mm.t2].forEach(function(t){
             if(t&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0){
-              if(!stats[t])stats[t]={t:t,w:0,d:0,l:0,pts:0,gd:0,gp:0,ga:0};
+              if(!stats[t])stats[t]={t:t,w:0,d:0,l:0,pts:0,gd:0,gp:0,ga:0,yc:0,rc:0};
             }
           });
           if(mm.s1==null||mm.s2==null)return;
@@ -4127,6 +4164,17 @@ function pB(c){
           if(mm.isDraw||mm.s1===mm.s2){stats[t1].d++;stats[t2].d++;stats[t1].pts++;stats[t2].pts++;}
           else if(mm.w===t1){stats[t1].w++;stats[t1].pts+=3;stats[t2].l++;}
           else if(mm.w===t2){stats[t2].w++;stats[t2].pts+=3;stats[t1].l++;}
+          // Accumulate cards for tiebreakers (yellow + red per team)
+          if(mm.cards){
+            if(mm.cards[t1]){
+              stats[t1].yc+=(mm.cards[t1].y||0);
+              stats[t1].rc+=(mm.cards[t1].r||0);
+            }
+            if(mm.cards[t2]){
+              stats[t2].yc+=(mm.cards[t2].y||0);
+              stats[t2].rc+=(mm.cards[t2].r||0);
+            }
+          }
         });
         var tiebreakers=(S.tiebreakers||['gd','headtohead','gp']);
         var sorted=Object.values(stats).sort(function(a,b){
@@ -4141,6 +4189,12 @@ function pB(c){
               if(hth&&hth.w){if(hth.w===a.t)return -1;if(hth.w===b.t)return 1;}
             }
           }
+          // Final tiebreakers (always applied at the end): fewer red cards,
+          // then fewer yellow cards. The team with cleaner disciplinary
+          // record wins the tie. Order: PTS → SG → GP → ...other configured
+          // tiebreakers... → less RC → less YC.
+          if(a.rc!==b.rc)return a.rc-b.rc;
+          if(a.yc!==b.yc)return a.yc-b.yc;
           return 0;
         });
         if(!sorted.length)return{tbl:null,sorted:[]};
@@ -4361,9 +4415,10 @@ function pB(c){
               style:{border:'2px solid '+color,borderRadius:'10px',overflow:'hidden',cursor:canClick?'pointer':'default',marginBottom:'8px'},
               onclick:canClick?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null
             });
+            var _gt2=formatGameTime(m);
             var hdrDiv=h('div',{style:{background:color+'22',padding:'6px 14px',fontSize:'10px',fontWeight:'700',color:color,textTransform:'uppercase',letterSpacing:'.08em',display:'flex',justifyContent:'space-between',alignItems:'center'}},
               label,
-              ([m._hora,m.lc].filter(Boolean).join(' '))?h('span',{style:{fontWeight:'400',opacity:'.8',fontSize:'9px'}},([m._hora,m.lc].filter(Boolean).join(' '))):null
+              _gt2?h('span',{style:{fontWeight:'400',opacity:'.8',fontSize:'9px'}},_gt2):null
             );
             card.appendChild(hdrDiv);
             function teamRow(nm,isWin,score,isPH){
@@ -4518,10 +4573,8 @@ function pB(c){
           var t2ready=m.t2&&m.t2.indexOf('PH_')!==0&&m.t2.indexOf('GW_')!==0&&m.t2.indexOf('W_')!==0&&m.t2.indexOf('L_')!==0&&m.t2!=='BYE';
           var canClick=(S.role==='admin'||S.role==='judge')&&t1ready&&t2ready;
           var mc=h('div',{style:{marginBottom:'14px',cursor:canClick?'pointer':'default',borderRadius:'10px',overflow:'hidden',border:'1px solid var(--br)'},onclick:canClick?function(){S.mod={tp:'result',mid:m.id,bk:bkey,ct:S.bc};R()}:null});
-          if(m._hora||m.lc)mc.appendChild(h('div',{style:{fontSize:'10px',color:'var(--tx3)',padding:'4px 10px',background:'var(--c2)',borderBottom:'1px solid var(--br)'}},
-            h('span',{style:{fontWeight:'600'}},m._hora||''),
-            m.lc?h('span',{style:{marginLeft:'6px',opacity:'.7'}},m.lc):null
-          ));
+          var _gt3=formatGameTime(m);
+          if(_gt3)mc.appendChild(h('div',{style:{fontSize:'10px',color:'var(--tx3)',padding:'4px 10px',background:'var(--c2)',borderBottom:'1px solid var(--br)'}},_gt3));
           mc.appendChild(tRow(m.t1,dn1,t1win,t1wo,score1));
           mc.appendChild(tRow(m.t2,dn2,t2win,t2wo,score2));
           col.appendChild(mc);
