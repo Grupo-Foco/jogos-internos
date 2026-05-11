@@ -9221,6 +9221,87 @@ function getDbPayload(){
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// OPTIMISTIC LOCKING — PROTECTION AGAINST CONCURRENT ADMIN OVERWRITES
+// ─────────────────────────────────────────────────────────────────────────
+// Before saving, fetch the server's current `updated_at`. If it differs from
+// MT.lastLoadedAt (the timestamp at the time of our last load), it means
+// another admin has saved changes that we haven't yet seen. Saving our
+// payload would overwrite their work and silently destroy data.
+//
+// Behavior on conflict:
+//   • Block the save
+//   • Show a blocking modal explaining the conflict
+//   • List the local changes the user has made (so they can re-enter them)
+//   • Offer "Reload now" to fetch fresh data
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Build a human-readable summary of what changed locally between the last
+// loaded state and the current S. Best-effort: focuses on the most common
+// user actions (match score lancements, podiums, registration toggles).
+// Without a snapshot of the pre-load state we just describe what's editable.
+function _describePendingChanges(){
+  // We compare current matches with results count vs what the user likely
+  // has in mind. Since we don't snapshot the loaded state, we list a few
+  // recent edits guessed from S.auditLog if present.
+  var lines=[];
+  if(S.auditLog&&S.auditLog.length){
+    // Take last 5 audit entries since this load
+    var recent=S.auditLog.slice(-5);
+    recent.forEach(function(e){
+      if(!e||!e.act)return;
+      lines.push('• '+(e.act||'')+(e.detail?' — '+e.detail:''));
+    });
+  }
+  if(!lines.length){
+    // Generic fallback
+    lines.push('• Alterações nos últimos jogos/inscrições');
+  }
+  return lines.join('\n');
+}
+
+// Show the conflict alert as a blocking modal (not browser alert — looks
+// integrated, can be dismissed, and re-rendered if R() fires).
+function showSaveConflictAlert(onReload){
+  // Remove any previous conflict modal to avoid stacking
+  var prev=document.getElementById('save-conflict-modal');
+  if(prev&&prev.parentNode)prev.parentNode.removeChild(prev);
+  var ov=document.createElement('div');
+  ov.id='save-conflict-modal';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:99999;padding:16px';
+  var md=document.createElement('div');
+  md.style.cssText='background:#1f2937;color:#f3f4f6;border:1px solid #ef4444;border-radius:12px;max-width:520px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.5);font-family:-apple-system,Inter,sans-serif';
+  var pending=_describePendingChanges();
+  md.innerHTML=
+    '<div style="font-size:20px;font-weight:800;margin-bottom:6px;color:#fca5a5">⚠️ Conflito de edição detectado</div>'+
+    '<div style="font-size:13px;color:#fbbf24;margin-bottom:14px;font-weight:600">Outro administrador alterou os dados há instantes</div>'+
+    '<div style="font-size:13px;line-height:1.6;color:#d1d5db;margin-bottom:14px">'+
+      'Para evitar sobrescrever o trabalho dele, suas alterações desde a última recarga <b style="color:#fca5a5">NÃO foram salvas</b>.'+
+    '</div>'+
+    '<div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:12px;margin-bottom:14px">'+
+      '<div style="font-size:11px;font-weight:700;color:#fbbf24;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">📝 Anote o que você lançou:</div>'+
+      '<pre style="font-size:12px;color:#fde68a;white-space:pre-wrap;margin:0;font-family:\'Space Mono\',monospace">'+
+      (pending||'(detalhes não disponíveis)')+
+      '</pre>'+
+    '</div>'+
+    '<div style="font-size:12px;color:#9ca3af;margin-bottom:16px">'+
+      'Após anotar, clique em <b style="color:#34d399">Recarregar</b>. Os dados atualizados serão buscados e você poderá relançar.'+
+    '</div>'+
+    '<div style="display:flex;gap:8px;justify-content:flex-end">'+
+      '<button id="conflict-cancel" style="background:#374151;color:#f3f4f6;border:1px solid #4b5563;padding:10px 16px;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px">Cancelar</button>'+
+      '<button id="conflict-reload" style="background:#34d399;color:#022c22;border:none;padding:10px 16px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px">🔄 Recarregar agora</button>'+
+    '</div>';
+  ov.appendChild(md);
+  document.body.appendChild(ov);
+  document.getElementById('conflict-cancel').onclick=function(){
+    if(ov.parentNode)ov.parentNode.removeChild(ov);
+  };
+  document.getElementById('conflict-reload').onclick=function(){
+    if(ov.parentNode)ov.parentNode.removeChild(ov);
+    if(onReload)onReload();
+  };
+}
+
 function syncToSupabase(manual){
   if(!S.sb.url||!S.sb.key){
     if(manual)alert('Configure a URL e a chave do Supabase primeiro (⚙️ Configurações).');
@@ -9228,9 +9309,55 @@ function syncToSupabase(manual){
   }
   // SAFETY: Don't save before data is loaded
   if(!MT.dataLoaded&&!manual){console.log('syncToSupabase blocked: waiting for load');return}
+
+  // If we already detected a conflict and the user hasn't reloaded yet,
+  // don't keep trying to save — wait for them to act.
+  if(MT.conflictDetected){
+    console.log('syncToSupabase blocked: pending conflict resolution');
+    return;
+  }
+
   S.sb.syncing=true;
   var hasFocus=document.activeElement&&(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='SELECT'||document.activeElement.tagName==='TEXTAREA');
   if(!S.mod&&!hasFocus)R();
+
+  // ── OPTIMISTIC-LOCK PRECHECK ──────────────────────────────────────────
+  // Fetch the server's current updated_at and compare with what we have
+  // baseline (MT.lastLoadedAt). If they differ → CONFLICT, don't save.
+  var dbId=getSchoolDbId();
+  fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.'+dbId+'&select=updated_at',{
+    headers:{'apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key}
+  }).then(function(r){return r.json()}).then(function(rows){
+    var serverTs=(rows&&rows[0]&&rows[0].updated_at)||null;
+    // If we have a baseline AND the server has been updated since we loaded,
+    // someone else saved. Block & alert.
+    if(MT.lastLoadedAt&&serverTs&&serverTs!==MT.lastLoadedAt){
+      console.warn('Optimistic-lock conflict detected. Server:',serverTs,'Our baseline:',MT.lastLoadedAt);
+      MT.conflictDetected=true;
+      S.sb.syncing=false;
+      S.sb.status='conflict';
+      // Show the alert
+      showSaveConflictAlert(function reload(){
+        // User accepted to reload — clear conflict flag and refetch
+        MT.conflictDetected=false;
+        loadFromSupabase(function(){R()});
+      });
+      return;
+    }
+    // ── No conflict, proceed with the actual save ────────────────────
+    _doActualSave(manual,serverTs);
+  }).catch(function(err){
+    // Network problem during the precheck. Be cautious and skip this save
+    // attempt — better to retry later than risk overwriting.
+    console.warn('Precheck failed (network):',err,'— save deferred');
+    S.sb.syncing=false;
+    S.sb.status='error';
+  });
+}
+
+// Performs the actual write to Supabase after the optimistic-lock precheck
+// has cleared. Encapsulated so that the precheck can decide whether to call.
+function _doActualSave(manual){
   var payload=getDbPayload();
   // BACKUP: Save a backup copy before overwriting (only every 5 minutes max)
   var now=Date.now();
@@ -9244,23 +9371,41 @@ function syncToSupabase(manual){
       body:JSON.stringify({id:backupId,data:payload.data,updated_at:new Date().toISOString()})
     }).catch(function(e){console.error('Backup failed:',e)});
   }
-  // Main save
+  // Main save — request 'return=representation' so we get back the new
+  // updated_at and can use it as the next baseline for this session.
   fetch(S.sb.url+'/rest/v1/jogos_data',{
     method:'POST',
     headers:{
       'Content-Type':'application/json',
       'apikey':S.sb.key,
       'Authorization':'Bearer '+S.sb.key,
-      'Prefer':'resolution=merge-duplicates'
+      'Prefer':'resolution=merge-duplicates,return=representation'
     },
     body:JSON.stringify(payload)
   }).then(function(res){
     S.sb.syncing=false;
     if(res.ok||res.status===201||res.status===200){
       S.sb.status='ok';S.sb.lastSync=new Date().toISOString();
+      // Try to extract new updated_at from response body to update baseline
+      return res.json().catch(function(){return null});
     } else {
       S.sb.status='error';
       res.text().then(function(t){console.error('Supabase error:',t)});
+      return null;
+    }
+  }).then(function(body){
+    // body should be an array of rows representing what was upserted
+    if(body&&body.length&&body[0].updated_at){
+      MT.lastLoadedAt=body[0].updated_at;
+    } else {
+      // Fallback: refetch the timestamp so we don't get stuck thinking
+      // there's a conflict on the next save.
+      var dbId=getSchoolDbId();
+      fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.'+dbId+'&select=updated_at',{
+        headers:{'apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key}
+      }).then(function(r){return r.json()}).then(function(rows){
+        if(rows&&rows[0]&&rows[0].updated_at)MT.lastLoadedAt=rows[0].updated_at;
+      }).catch(function(){});
     }
     var hf2=document.activeElement&&(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='SELECT'||document.activeElement.tagName==='TEXTAREA');
     if(!S.mod&&!hf2)R();
@@ -9271,11 +9416,64 @@ function syncToSupabase(manual){
   });
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// BACKGROUND POLLING (30s) — detect remote changes while idle
+// ─────────────────────────────────────────────────────────────────────────
+// Periodically polls the server's updated_at. If it differs from our
+// baseline, shows a non-intrusive banner asking the user to reload. Skips
+// the check while user is editing (focused input, open modal) to avoid
+// disrupting their work — the conflict will be caught on the next save
+// attempt anyway via the optimistic lock.
+// ═══════════════════════════════════════════════════════════════════════════
+function _startConflictPolling(){
+  // Avoid double-start
+  if(MT._pollingTimer)return;
+  MT._pollingTimer=setInterval(function(){
+    if(!MT.dataLoaded||!S.sb.url||!S.sb.key)return;
+    if(MT.conflictDetected)return; // already showing alert
+    if(S.mod)return; // user busy
+    var hasFocus=document.activeElement&&(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='SELECT'||document.activeElement.tagName==='TEXTAREA');
+    if(hasFocus)return;
+    var dbId=getSchoolDbId();
+    fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.'+dbId+'&select=updated_at',{
+      headers:{'apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key}
+    }).then(function(r){return r.json()}).then(function(rows){
+      var serverTs=(rows&&rows[0]&&rows[0].updated_at)||null;
+      if(MT.lastLoadedAt&&serverTs&&serverTs!==MT.lastLoadedAt){
+        // Remote change detected — show a small banner (non-modal)
+        _showRemoteChangeBanner();
+      }
+    }).catch(function(){});
+  },30000); // 30 seconds
+}
+function _showRemoteChangeBanner(){
+  // Don't stack multiple banners
+  if(document.getElementById('remote-change-banner'))return;
+  var b=document.createElement('div');
+  b.id='remote-change-banner';
+  b.style.cssText='position:fixed;top:12px;left:50%;transform:translateX(-50%);background:#1f2937;color:#fbbf24;border:1px solid #fbbf24;padding:8px 14px;border-radius:10px;font-size:13px;font-weight:600;z-index:9998;box-shadow:0 6px 20px rgba(0,0,0,.4);display:flex;align-items:center;gap:10px;font-family:-apple-system,Inter,sans-serif';
+  b.innerHTML=
+    '<span>🔄 Dados atualizados por outro admin</span>'+
+    '<button id="banner-reload" style="background:#34d399;color:#022c22;border:none;padding:5px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px">Recarregar</button>'+
+    '<button id="banner-dismiss" style="background:transparent;color:#9ca3af;border:none;padding:5px 8px;cursor:pointer;font-size:18px;line-height:1">×</button>';
+  document.body.appendChild(b);
+  document.getElementById('banner-reload').onclick=function(){
+    if(b.parentNode)b.parentNode.removeChild(b);
+    loadFromSupabase(function(){R()});
+  };
+  document.getElementById('banner-dismiss').onclick=function(){
+    if(b.parentNode)b.parentNode.removeChild(b);
+  };
+}
+
 function loadFromSupabase(onDone){
   if(!S.sb.url||!S.sb.key){if(onDone)onDone(false);return;}
   S.sb.syncing=true;R();
   var dbId=getSchoolDbId();
-  fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.'+dbId+'&select=data',{
+  // OPTIMISTIC LOCKING: also fetch updated_at so we know the version we
+  // loaded. Future saves will compare the server's updated_at against
+  // MT.lastLoadedAt to detect concurrent modifications by other admins.
+  fetch(S.sb.url+'/rest/v1/jogos_data?id=eq.'+dbId+'&select=data,updated_at',{
     headers:{
       'apikey':S.sb.key,
       'Authorization':'Bearer '+S.sb.key
@@ -9299,9 +9497,13 @@ function loadFromSupabase(onDone){
         if(!S.rankingAccess.from)S.rankingAccess.from='07:00';
         if(!S.rankingAccess.to)S.rankingAccess.to='20:00';
       }
+      // Record the server timestamp at load time (optimistic-lock baseline)
+      MT.lastLoadedAt=rows[0].updated_at||null;
+      MT.conflictDetected=false;
       S.sb.status='ok';R();
       if(onDone)onDone(true);
     } else {
+      MT.lastLoadedAt=null; // empty record — no baseline
       S.sb.status='ok';
       if(onDone)onDone(false);
       R();
@@ -9538,6 +9740,9 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
   loadFromSupabase(function(ok){
     MT.loading=false;
     MT.dataLoaded=true; // Flag: data has been loaded, safe to save
+    // Start background polling to detect when other admins save changes.
+    // 30-second interval; only checks while idle (no modal, no focused input).
+    _startConflictPolling();
     // v2 (Arena) scoring normalization: force Win/Draw/Loss bonuses to zero.
     // Schools that loaded data from Supabase may have non-zero values
     // persisted from before this rule existed. Only W.O. (pWO) is kept.
