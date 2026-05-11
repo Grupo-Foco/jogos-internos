@@ -9426,6 +9426,19 @@ function _doActualSave(manual){
 // attempt anyway via the optimistic lock.
 // ═══════════════════════════════════════════════════════════════════════════
 function _startConflictPolling(){
+  // ── DISABLED by request ──────────────────────────────────────────────
+  // Background polling caused a "Dados atualizados por outro admin"
+  // banner to pop up every 30s in multi-admin scenarios (which is the
+  // normal mode of operation during a tournament), drowning out real
+  // signals and frustrating users.
+  //
+  // The optimistic lock check at SAVE time (inside syncToSupabase)
+  // remains active, so genuine conflicts (an admin tries to save over
+  // someone else's work) ARE still surfaced — just at the right moment.
+  //
+  // To re-enable polling, remove the early-return below.
+  return;
+  // ─────────────────────────────────────────────────────────────────────
   // Avoid double-start
   if(MT._pollingTimer)return;
   MT._pollingTimer=setInterval(function(){
