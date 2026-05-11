@@ -3266,28 +3266,94 @@ function calcRk(){
         });
         return;
       }
-      if(finalMatch&&finalMatch.w){
-        var first=finalMatch.w;
-        var second=finalMatch.w===finalMatch.t1?finalMatch.t2:finalMatch.t1;
-        // Use pospts helper to get position points (supports both old p1..p8 and new positions[])
-        function pp(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
-        if(first&&first!=='BYE'&&first.indexOf('W_')!==0&&first.indexOf('L_')!==0&&first.indexOf('GW_')!==0&&first.indexOf('PH_')!==0){
-          if(!pts[first])pts[first]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[first].p+=pp(1);
+      // ── Position points for elimination brackets (1º-8º) ─────────────
+      // Uses the same "perdeu pro melhor classificado fica acima" rule
+      // applied in the visual Classificação Final (see getFinalOrderedIds
+      // inside pB). Without this, only 1º/2º and explicit 3rd-place
+      // matches received position points — semifinal/quarterfinal losers
+      // got nothing on the Ranking, even though the visual classification
+      // showed them at 3º-8º.
+      function pp(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
+      function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
+      function award(tid,rank){
+        if(!isReal(tid))return;
+        if(!pts[tid])pts[tid]={w:0,d:0,l:0,p:0,wo:0,draws:0};
+        pts[tid].p+=pp(rank);
+      }
+
+      // 1º and 2º from the final
+      if(!finalMatch||!finalMatch.w)return;
+      var first=isReal(finalMatch.w)?finalMatch.w:null;
+      var second=null;
+      if(first){
+        var srunup=finalMatch.w===finalMatch.t1?finalMatch.t2:finalMatch.t1;
+        if(isReal(srunup))second=srunup;
+      }
+      award(first,1);
+      award(second,2);
+
+      // 3º and 4º
+      var third=null,fourth=null;
+      if(thirdMatch&&thirdMatch.w&&isReal(thirdMatch.w)){
+        // Explicit 3rd-place match
+        third=thirdMatch.w;
+        var f=thirdMatch.w===thirdMatch.t1?thirdMatch.t2:thirdMatch.t1;
+        if(isReal(f))fourth=f;
+      } else {
+        // Derive from semifinal losers, ordered by position of the team
+        // that eliminated them (perdeu pro 1º vem antes de perdeu pro 2º).
+        var semiRound=null;
+        for(var i=rs.length-1;i>=0;i--){
+          var fr=rs[i];if(fr===finalRound)continue;
+          var lbl=(fr.label||'').toUpperCase();
+          if(lbl.indexOf('SEMI')>=0||fr.m.length===2){semiRound=fr;break}
         }
-        if(second&&second!=='BYE'&&second.indexOf('W_')!==0&&second.indexOf('L_')!==0&&second.indexOf('GW_')!==0&&second.indexOf('PH_')!==0){
-          if(!pts[second])pts[second]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[second].p+=pp(2);
+        if(semiRound){
+          var semiPairs=[];
+          semiRound.m.forEach(function(mm){
+            if(!mm.w)return;
+            var loser=mm.w===mm.t1?mm.t2:mm.t1;
+            if(!isReal(loser))return;
+            semiPairs.push({loser:loser,lostTo:mm.w});
+          });
+          function rankOf12(tid){if(tid===first)return 1;if(tid===second)return 2;return 99}
+          semiPairs.sort(function(a,b){return rankOf12(a.lostTo)-rankOf12(b.lostTo)});
+          third=semiPairs[0]?semiPairs[0].loser:null;
+          fourth=semiPairs[1]?semiPairs[1].loser:null;
         }
       }
-      if(thirdMatch&&thirdMatch.w){
-        function pp3(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
-        var third=thirdMatch.w;
-        var fourth=thirdMatch.w===thirdMatch.t1?thirdMatch.t2:thirdMatch.t1;
-        if(third&&third!=='BYE'&&third.indexOf('W_')!==0&&third.indexOf('L_')!==0&&third.indexOf('GW_')!==0&&third.indexOf('PH_')!==0){
-          if(!pts[third])pts[third]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[third].p+=pp3(3);
+      award(third,3);
+      award(fourth,4);
+
+      // 5º-8º from quarterfinal losers (or first elimination round w/ 4 matches)
+      var quarterRound=null;
+      for(var j=0;j<rs.length;j++){
+        var fr2=rs[j];
+        var lbl2=(fr2.label||'').toUpperCase();
+        if(fr2===finalRound)continue;
+        if(lbl2.indexOf('SEMI')>=0||fr2.m.length===2)continue;
+        if(lbl2.indexOf('QUART')>=0||fr2.m.length===4){quarterRound=fr2;break}
+      }
+      if(quarterRound){
+        function rankOf14(tid){
+          if(tid===first)return 1;
+          if(tid===second)return 2;
+          if(tid===third)return 3;
+          if(tid===fourth)return 4;
+          return 99;
         }
-        if(fourth&&fourth!=='BYE'&&fourth.indexOf('W_')!==0&&fourth.indexOf('L_')!==0&&fourth.indexOf('GW_')!==0&&fourth.indexOf('PH_')!==0){
-          if(!pts[fourth])pts[fourth]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[fourth].p+=pp3(4);
-        }
+        var qPairs=[];
+        quarterRound.m.forEach(function(mm){
+          if(!mm.w)return;
+          var loser=mm.w===mm.t1?mm.t2:mm.t1;
+          if(!isReal(loser))return;
+          qPairs.push({loser:loser,lostTo:mm.w});
+        });
+        qPairs.sort(function(a,b){return rankOf14(a.lostTo)-rankOf14(b.lostTo)});
+        if(qPairs[0])award(qPairs[0].loser,5);
+        if(qPairs[1])award(qPairs[1].loser,6);
+        if(qPairs[2])award(qPairs[2].loser,7);
+        if(qPairs[3])award(qPairs[3].loser,8);
       }
     });
   });
