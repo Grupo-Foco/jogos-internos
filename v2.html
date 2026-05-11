@@ -5394,34 +5394,82 @@ function calcClassDetail(classId){
         if(!isRodizio&&finalRound&&finalRound.m){
           var finalM=finalRound.m.find(function(m){return!m.is3rd});
           var thirdM=finalRound.m.find(function(m){return m.is3rd});
-          if(finalM&&finalM.w){
-            var checkPos=function(teamId,pos,label){
-              if(!teamId||teamId==='BYE'||teamId.indexOf('W_')===0||teamId.indexOf('L_')===0||teamId.indexOf('PH_')===0||teamId.indexOf('GW_')===0)return;
-              var te=S.enr.find(function(e){return e.id===teamId});
-              var isOurClass=te?te.ci===classId:teamId===classId;
-              if(isOurClass){
-                var pts=pospts(pos);
-                if(pts)lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+label,pts:pts});
-              }
-            };
-            checkPos(finalM.w,1,'1º Lugar');
-            var second=finalM.w===finalM.t1?finalM.t2:finalM.t1;
-            checkPos(second,2,'2º Lugar');
+          function isRealT(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
+          // Identify 1º-8º by the same rule used in the visual Final Classification.
+          var first=null,second=null,third=null,fourth=null;
+          if(finalM&&finalM.w&&isRealT(finalM.w)){
+            first=finalM.w;
+            var srunup=finalM.w===finalM.t1?finalM.t2:finalM.t1;
+            if(isRealT(srunup))second=srunup;
           }
-          if(thirdM&&thirdM.w){
-            var checkPos3=function(teamId,pos,label){
-              if(!teamId||teamId==='BYE'||teamId.indexOf('W_')===0||teamId.indexOf('L_')===0||teamId.indexOf('PH_')===0)return;
-              var te=S.enr.find(function(e){return e.id===teamId});
-              var isOurClass=te?te.ci===classId:teamId===classId;
-              if(isOurClass){
-                var pts=pospts(pos);
-                if(pts)lines.push({desc:'🥉 <b>'+spName+' '+ct+'</b> — '+label,pts:pts});
-              }
-            };
-            checkPos3(thirdM.w,3,'3º Lugar');
-            var fourth=thirdM.w===thirdM.t1?thirdM.t2:thirdM.t1;
-            checkPos3(fourth,4,'4º Lugar');
+          if(thirdM&&thirdM.w&&isRealT(thirdM.w)){
+            third=thirdM.w;
+            var fp=thirdM.w===thirdM.t1?thirdM.t2:thirdM.t1;
+            if(isRealT(fp))fourth=fp;
+          } else if(first){
+            // No 3rd-place match: derive 3º/4º from semifinal losers.
+            var semiRound=null;
+            for(var i=rs.length-1;i>=0;i--){
+              var fr=rs[i];if(fr===finalRound)continue;
+              var lbl=(fr.label||'').toUpperCase();
+              if(lbl.indexOf('SEMI')>=0||fr.m.length===2){semiRound=fr;break}
+            }
+            if(semiRound){
+              var semiPairs=[];
+              semiRound.m.forEach(function(mm){
+                if(!mm.w)return;
+                var loser=mm.w===mm.t1?mm.t2:mm.t1;
+                if(!isRealT(loser))return;
+                semiPairs.push({loser:loser,lostTo:mm.w});
+              });
+              function rankOf12(tid){if(tid===first)return 1;if(tid===second)return 2;return 99}
+              semiPairs.sort(function(a,b){return rankOf12(a.lostTo)-rankOf12(b.lostTo)});
+              if(semiPairs[0])third=semiPairs[0].loser;
+              if(semiPairs[1])fourth=semiPairs[1].loser;
+            }
           }
+          // 5º-8º from quarterfinal losers
+          var fifth=null,sixth=null,seventh=null,eighth=null;
+          var quarterRound=null;
+          for(var j=0;j<rs.length;j++){
+            var fr2=rs[j];
+            var lbl2=(fr2.label||'').toUpperCase();
+            if(fr2===finalRound)continue;
+            if(lbl2.indexOf('SEMI')>=0||fr2.m.length===2)continue;
+            if(lbl2.indexOf('QUART')>=0||fr2.m.length===4){quarterRound=fr2;break}
+          }
+          if(quarterRound&&first){
+            function rankOf14(tid){
+              if(tid===first)return 1;
+              if(tid===second)return 2;
+              if(tid===third)return 3;
+              if(tid===fourth)return 4;
+              return 99;
+            }
+            var qPairs=[];
+            quarterRound.m.forEach(function(mm){
+              if(!mm.w)return;
+              var loser=mm.w===mm.t1?mm.t2:mm.t1;
+              if(!isRealT(loser))return;
+              qPairs.push({loser:loser,lostTo:mm.w});
+            });
+            qPairs.sort(function(a,b){return rankOf14(a.lostTo)-rankOf14(b.lostTo)});
+            if(qPairs[0])fifth=qPairs[0].loser;
+            if(qPairs[1])sixth=qPairs[1].loser;
+            if(qPairs[2])seventh=qPairs[2].loser;
+            if(qPairs[3])eighth=qPairs[3].loser;
+          }
+          // Emit a breakdown line if any of the resolved teams matches the current class
+          var posLabel=['','1º Lugar','2º Lugar','3º Lugar','4º Lugar','5º Lugar','6º Lugar','7º Lugar','8º Lugar'];
+          [[first,1],[second,2],[third,3],[fourth,4],[fifth,5],[sixth,6],[seventh,7],[eighth,8]].forEach(function(pair){
+            var tid=pair[0],pos=pair[1];
+            if(!tid)return;
+            var te=S.enr.find(function(e){return e.id===tid});
+            var isOurClass=te?te.ci===classId:tid===classId;
+            if(!isOurClass)return;
+            var pts=pospts(pos);
+            if(pts)lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+posLabel[pos],pts:pts});
+          });
         }
       }
     });
