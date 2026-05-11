@@ -3275,8 +3275,15 @@ function calcRk(){
       // showed them at 3º-8º.
       function pp(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
       function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
+      // W.O. exclusion (per project owner): a team that gave W.O. in this
+      // bracket loses ALL position points for this sport (in addition to
+      // the per-sport −15 W.O. penalty already applied above via m.wo).
+      // Their slot in the visual Final Classification shows as "Vago".
+      var woInBracket={};
+      rs.forEach(function(rd){rd.m&&rd.m.forEach(function(m){if(m.wo&&isReal(m.wo))woInBracket[m.wo]=true})});
       function award(tid,rank){
         if(!isReal(tid))return;
+        if(woInBracket[tid])return; // skip pts of position for W.O. teams
         if(!pts[tid])pts[tid]={w:0,d:0,l:0,p:0,wo:0,draws:0};
         pts[tid].p+=pp(rank);
       }
@@ -4541,18 +4548,41 @@ function pB(c){
         card.appendChild(h('div',{'class':'card-h',style:{background:'linear-gradient(135deg,rgba(34,211,238,.08),rgba(139,92,246,.06))'}},
           h('div',{'class':'card-t'},'🏆 Classificação Final')));
         var anyShown=false;
+        // Determine the last filled position so we don't pad with empty rows
+        // beyond the meaningful end of the classification.
+        var lastFilledIdx=-1;
+        for(var ix=Math.min(7,orderedTeamIds.length-1);ix>=0;ix--){
+          if(orderedTeamIds[ix]){lastFilledIdx=ix;break}
+        }
         orderedTeamIds.slice(0,8).forEach(function(tid,i){
-          if(!tid)return;
-          var nm=tName(tid);
-          var pts=pospts(i+1);
-          var row=h('div',{'class':'fc-row',style:{display:'grid',gridTemplateColumns:'130px 1fr 80px',gap:'10px',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid var(--br)',background:i===0?'rgba(251,191,36,.06)':i===1?'rgba(148,163,184,.05)':i===2?'rgba(251,146,60,.05)':''}},
-            h('span',{'class':'fc-lbl',style:{fontWeight:'700',fontSize:'12px',color:posCol[i]||'var(--tx3)'}},posLbl[i]||((i+1)+'º Lugar')),
-            h('span',{style:{display:'flex',alignItems:'center',gap:'8px',fontSize:'14px',fontWeight:'600',minWidth:'0',overflow:'hidden'}},
-              h('span',{style:{width:'10px',height:'10px',borderRadius:'50%',background:ec(nm),flexShrink:'0'}}),
-              h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},nm)
-            ),
-            h('span',{'class':'fc-pts',style:{textAlign:'right',fontFamily:"'Space Mono'",fontSize:'14px',fontWeight:'800',color:pts>0?'var(--gn)':pts<0?'var(--rd)':'var(--tx3)'}},(pts>0?'+':'')+pts+' pts')
-          );
+          // If the slot is null/undefined AND it's beyond the last filled,
+          // skip (avoids showing trailing empty rows). Empty slots BEFORE
+          // the last filled mean a W.O. happened — those we DO show as VAGO.
+          if(!tid&&i>lastFilledIdx)return;
+          var row;
+          if(!tid){
+            // W.O. produced an empty slot — show explicitly that no team
+            // occupies this position and no position points are awarded.
+            row=h('div',{'class':'fc-row',style:{display:'grid',gridTemplateColumns:'130px 1fr 80px',gap:'10px',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid var(--br)',background:'rgba(127,127,127,.04)',opacity:'.55'}},
+              h('span',{'class':'fc-lbl',style:{fontWeight:'700',fontSize:'12px',color:'var(--tx3)'}},posLbl[i]||((i+1)+'º Lugar')),
+              h('span',{style:{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',fontStyle:'italic',color:'var(--tx3)',minWidth:'0',overflow:'hidden'}},
+                h('span',{style:{width:'10px',height:'10px',borderRadius:'50%',background:'transparent',border:'1px dashed var(--tx3)',flexShrink:'0'}}),
+                h('span',{},'Vago (W.O.)')
+              ),
+              h('span',{'class':'fc-pts',style:{textAlign:'right',fontFamily:"'Space Mono'",fontSize:'12px',color:'var(--tx3)',fontStyle:'italic'}},'—')
+            );
+          } else {
+            var nm=tName(tid);
+            var pts=pospts(i+1);
+            row=h('div',{'class':'fc-row',style:{display:'grid',gridTemplateColumns:'130px 1fr 80px',gap:'10px',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid var(--br)',background:i===0?'rgba(251,191,36,.06)':i===1?'rgba(148,163,184,.05)':i===2?'rgba(251,146,60,.05)':''}},
+              h('span',{'class':'fc-lbl',style:{fontWeight:'700',fontSize:'12px',color:posCol[i]||'var(--tx3)'}},posLbl[i]||((i+1)+'º Lugar')),
+              h('span',{style:{display:'flex',alignItems:'center',gap:'8px',fontSize:'14px',fontWeight:'600',minWidth:'0',overflow:'hidden'}},
+                h('span',{style:{width:'10px',height:'10px',borderRadius:'50%',background:ec(nm),flexShrink:'0'}}),
+                h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},nm)
+              ),
+              h('span',{'class':'fc-pts',style:{textAlign:'right',fontFamily:"'Space Mono'",fontSize:'14px',fontWeight:'800',color:pts>0?'var(--gn)':pts<0?'var(--rd)':'var(--tx3)'}},(pts>0?'+':'')+pts+' pts')
+            );
+          }
           card.appendChild(row);
           anyShown=true;
         });
@@ -4594,6 +4624,17 @@ function pB(c){
         // saldo de gols (goal difference, m.s1−m.s2 across all matches).
         if(!finalRounds.length)return null;
         function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
+
+        // ── W.O. exclusion: any team that gave W.O. in this bracket is
+        //    excluded from the Classificação Final. Their position is
+        //    left empty (no other team moves up to fill it). This applies
+        //    only to this sport — the team's other sports are unaffected.
+        var woTeamIds={};
+        var allRoundsForWO=(typeof classifyRounds!=='undefined'?classifyRounds:[]).concat(finalRounds);
+        allRoundsForWO.forEach(function(rd){
+          if(!rd||!rd.m)return;
+          rd.m.forEach(function(m){if(m.wo&&isReal(m.wo))woTeamIds[m.wo]=true});
+        });
 
         // ── Compute goal-diff per team across ALL matches in this bracket,
         //    used only as the fallback tiebreaker. We don't depend on the
@@ -4716,7 +4757,15 @@ function pB(c){
           eighth=qPairs[3]?qPairs[3].loser:null;
         }
 
-        return[first,second,third,fourth,fifth,sixth,seventh,eighth].filter(Boolean);
+        // Nullify any positions whose team gave W.O. in this bracket.
+        // The slot stays in the array (as null) so its index/position is
+        // preserved and the renderer can show "Vago (W.O.)" for it.
+        var result=[first,second,third,fourth,fifth,sixth,seventh,eighth];
+        result=result.map(function(tid){return tid&&woTeamIds[tid]?null:tid});
+        // Trim trailing nulls (positions never filled, e.g. only 4 teams)
+        // but keep internal nulls (W.O. holes).
+        while(result.length&&result[result.length-1]==null)result.pop();
+        return result.length?result:null;
       }
 
       if(finalRounds.length&&showFinals){
@@ -5460,10 +5509,16 @@ function calcClassDetail(classId){
             if(qPairs[3])eighth=qPairs[3].loser;
           }
           // Emit a breakdown line if any of the resolved teams matches the current class
+          // Collect W.O. team ids in this bracket so we don't list pts of
+          // colocação (per project owner: time que deu W.O. perde a
+          // posição na Classificação Final daquele esporte).
+          var woInBkDtl={};
+          rs.forEach(function(rd){rd.m&&rd.m.forEach(function(m){if(m.wo&&isRealT(m.wo))woInBkDtl[m.wo]=true})});
           var posLabel=['','1º Lugar','2º Lugar','3º Lugar','4º Lugar','5º Lugar','6º Lugar','7º Lugar','8º Lugar'];
           [[first,1],[second,2],[third,3],[fourth,4],[fifth,5],[sixth,6],[seventh,7],[eighth,8]].forEach(function(pair){
             var tid=pair[0],pos=pair[1];
             if(!tid)return;
+            if(woInBkDtl[tid])return; // team gave W.O. — no position pts in this sport
             var te=S.enr.find(function(e){return e.id===tid});
             var isOurClass=te?te.ci===classId:tid===classId;
             if(!isOurClass)return;
@@ -6650,10 +6705,23 @@ function mRes(c){
       h('button',{'class':'btn btn-g',onclick:function(){
         var v1=parseInt(inp1.value)||0, v2=parseInt(inp2.value)||0;
         if(v1<0||v2<0){errDiv.style.display='block';errDiv.textContent='Pontuação não pode ser negativa.';return;}
-        // Check if this is a rodizio bracket (only 1 round = no knockout advancement)
+        // Check if THIS specific match is in a knockout round.
+        // Empate is allowed in:
+        //   - Pure rodizio brackets (bracket has 1 round)
+        //   - Group/round-robin phases inside mixed brackets (round label
+        //     is "Rodízio", "Classificatório", "Grupos" or similar)
+        // Empate is blocked in elimination rounds (Quartas/Semi/Final/3º Lugar/Disputa).
         var _bkRds=S.brk[S.mod.si]&&S.brk[S.mod.si][S.mod.ct]?S.brk[S.mod.si][S.mod.ct]:[];
         var _isRodizio=_bkRds.length<=1;
-        if(v1===v2&&!_isRodizio){errDiv.style.display='block';errDiv.textContent='Empate não permitido em fase eliminatória. Defina um vencedor.';return;}
+        // Find which round this match belongs to so we can evaluate its label.
+        var _matchRound=null;
+        for(var ri=0;ri<_bkRds.length;ri++){
+          if(_bkRds[ri].m&&_bkRds[ri].m.some(function(x){return x.id===m.id})){_matchRound=_bkRds[ri];break;}
+        }
+        var _roundLbl=((_matchRound&&_matchRound.label)||'').toUpperCase();
+        var _isGroupPhase=_roundLbl.indexOf('RODIZIO')>=0||_roundLbl.indexOf('RODÍZIO')>=0||_roundLbl.indexOf('CLASSIF')>=0||_roundLbl.indexOf('GRUPO')>=0||_roundLbl.indexOf('FASE DE GRUPOS')>=0;
+        var _drawAllowed=_isRodizio||_isGroupPhase;
+        if(v1===v2&&!_drawAllowed){errDiv.style.display='block';errDiv.textContent='Empate não permitido em fase eliminatória. Defina um vencedor.';return;}
         var winner=v1===v2?null:(v1>v2?m.t1:m.t2);
         var cards={};cards[m.t1]={y:cardState.t1y,r:cardState.t1r};cards[m.t2]={y:cardState.t2y,r:cardState.t2r};
         // Save the result
