@@ -4506,26 +4506,45 @@ function pB(c){
       // returned by buildStandingsTable. It provides PTS/SG/GP and lets us
       // resolve ties WITHIN a group. Without it, we fall back to bracket
       // order (insertion order of matches).
-      function getFinalOrderedIds(standingsSorted){
+      function getFinalOrderedIds(_unused){
+        // Final classification rule (Arena, project owner spec):
+        //
+        //   "Quem perdeu pro melhor classificado fica acima."
+        //
+        // Concretely:
+        //   • 1º  = the final's winner (the champion)
+        //   • 2º  = the final's runner-up (lost to the champion)
+        //   • 3º-4º = semifinal losers; the one who lost to the champion
+        //            (i.e. to the 1º) comes before the one who lost to the
+        //            runner-up (the 2º). Same logic applied transitively.
+        //   • 5º-8º = quarterfinal losers; ordered by the final position
+        //            of whoever eliminated them. Loser of (vs 1º) is 5º,
+        //            loser of (vs 2º) is 6º, loser of (vs 3º) is 7º,
+        //            loser of (vs 4º) is 8º.
+        //
+        // Tiebreaker fallback (very rare in pure elimination — only matters
+        // when two teams were eliminated by opponents that ended up in the
+        // same final position, which shouldn't happen in a clean bracket):
+        // saldo de gols (goal difference, m.s1−m.s2 across all matches).
         if(!finalRounds.length)return null;
         function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
 
-        // Map teamId → rank in the classification (lower index = better).
-        // Used to order ties within a group by PTS → SG → GP, since the
-        // standingsSorted array already encodes that priority.
-        var rankIdx={};
-        if(standingsSorted&&standingsSorted.length){
-          standingsSorted.forEach(function(s,i){rankIdx[s.t]=i});
-        }
-        function sortByStandings(arr){
-          return arr.slice().sort(function(a,b){
-            var ra=(rankIdx[a]!=null)?rankIdx[a]:9999;
-            var rb=(rankIdx[b]!=null)?rankIdx[b]:9999;
-            return ra-rb;
+        // ── Compute goal-diff per team across ALL matches in this bracket,
+        //    used only as the fallback tiebreaker. We don't depend on the
+        //    visual standings table anymore.
+        var sgMap={};
+        function trackSg(t,delta){if(!isReal(t))return;if(sgMap[t]==null)sgMap[t]=0;sgMap[t]+=delta}
+        var allRounds=(typeof classifyRounds!=='undefined'?classifyRounds:[]).concat(finalRounds);
+        allRounds.forEach(function(rd){
+          if(!rd||!rd.m)return;
+          rd.m.forEach(function(m){
+            if(m.s1==null||m.s2==null)return;
+            trackSg(m.t1,m.s1-m.s2);
+            trackSg(m.t2,m.s2-m.s1);
           });
-        }
+        });
 
-        // ── Group 1: 1st and 2nd place from the final round ─────────────
+        // ── Group 1: 1º and 2º from the final ────────────────────────────
         var lastFR=finalRounds[finalRounds.length-1];
         var finalM=lastFR.m.find(function(m){return!m.is3rd});
         var thirdM=lastFR.m.find(function(m){return m.is3rd});
@@ -4533,21 +4552,21 @@ function pB(c){
         var first=isReal(finalM.w)?finalM.w:null;
         var second=null;
         if(first){
-          var s=finalM.w===finalM.t1?finalM.t2:finalM.t1;
-          if(isReal(s))second=s;
+          var sx=finalM.w===finalM.t1?finalM.t2:finalM.t1;
+          if(isReal(sx))second=sx;
         }
 
-        // ── Group 2: 3rd and 4th place ───────────────────────────────────
+        // ── Group 2: 3º and 4º from the semifinals (or explicit 3rd match) ──
+        // For each semifinal loser, we know whom they lost to. The one who
+        // lost to the champion (1º) ranks above the one who lost to 2º.
         var third=null,fourth=null;
         if(thirdM&&thirdM.w&&isReal(thirdM.w)){
-          // Explicit 3rd-place match was played
+          // If the tournament played an explicit 3rd-place match, honor it
           third=thirdM.w;
           var f=thirdM.w===thirdM.t1?thirdM.t2:thirdM.t1;
           if(isReal(f))fourth=f;
         } else {
-          // No 3rd-place match: derive from semifinal losers.
-          // The semifinal round is the one right before the final and has
-          // 2 matches (or label contains "SEMI").
+          // Find the semifinal round (label contains SEMI or has 2 matches)
           var semiRound=null;
           for(var i=finalRounds.length-1;i>=0;i--){
             var fr=finalRounds[i];
@@ -4556,55 +4575,79 @@ function pB(c){
             if(lbl.indexOf('SEMI')>=0||fr.m.length===2){semiRound=fr;break}
           }
           if(semiRound){
-            var semiLosers=[];
+            // Collect {loser, lostTo} pairs from each semi
+            var semiPairs=[];
             semiRound.m.forEach(function(m){
               if(!m.w)return;
               var loser=m.w===m.t1?m.t2:m.t1;
-              if(isReal(loser))semiLosers.push(loser);
+              if(!isReal(loser))return;
+              semiPairs.push({loser:loser,lostTo:m.w});
             });
-            var orderedSL=sortByStandings(semiLosers);
-            third=orderedSL[0]||null;
-            fourth=orderedSL[1]||null;
+            // Rank by position of "lostTo": first==1, second==2, others==99
+            function rankOf(tid){
+              if(tid===first)return 1;
+              if(tid===second)return 2;
+              return 99;
+            }
+            semiPairs.sort(function(a,b){
+              var ra=rankOf(a.lostTo),rb=rankOf(b.lostTo);
+              if(ra!==rb)return ra-rb;
+              // Fallback: saldo de gols of the loser
+              var sa=sgMap[a.loser]||0,sb=sgMap[b.loser]||0;
+              return sb-sa;
+            });
+            third=semiPairs[0]?semiPairs[0].loser:null;
+            fourth=semiPairs[1]?semiPairs[1].loser:null;
           }
         }
 
-        // ── Group 3: 5th to 8th place — quarterfinal losers (or first-round
-        //    classify losers if no quarters round exists) ──────────────────
+        // ── Group 3: 5º-8º from the quarterfinals ───────────────────────
         var fifth=null,sixth=null,seventh=null,eighth=null;
-        // Locate quarterfinal round: label contains "QUART" or has 4 matches
-        // in the final-rounds chain, OR is the FIRST round when totalRounds=3.
+        // Locate quarterfinal round: label contains QUART or has 4 matches.
+        // If no explicit quarterfinal exists but the first classify round
+        // has 4 matches (typical Arena 3-stage chain: 4 classifies → 2 semis
+        // → 1 final), treat that classify round as the quarterfinal.
         var quarterRound=null;
         for(var j=0;j<finalRounds.length;j++){
           var fr2=finalRounds[j];
           var lbl2=(fr2.label||'').toUpperCase();
           if(fr2===lastFR)continue;
-          // Skip semifinal (already used)
           if(lbl2.indexOf('SEMI')>=0||fr2.m.length===2)continue;
           if(lbl2.indexOf('QUART')>=0||fr2.m.length===4){quarterRound=fr2;break}
         }
-        // Fallback: classifyRounds first round if it has 4 matches and 8 teams
         if(!quarterRound&&typeof classifyRounds!=='undefined'&&classifyRounds.length){
           var firstClass=classifyRounds[0];
           if(firstClass&&firstClass.m&&firstClass.m.length===4){
-            // Heuristic: the classify round IS the first elimination round
-            // for tournaments where classify+semi+final is a 3-stage chain
-            // (8 teams → 4 classifies → 2 semis → 1 final). This matches the
-            // Arena PDF format.
             quarterRound=firstClass;
           }
         }
         if(quarterRound){
-          var qLosers=[];
+          // Rank by final position of whoever eliminated them
+          function rankOfFull(tid){
+            if(tid===first)return 1;
+            if(tid===second)return 2;
+            if(tid===third)return 3;
+            if(tid===fourth)return 4;
+            return 99;
+          }
+          var qPairs=[];
           quarterRound.m.forEach(function(m){
             if(!m.w)return;
             var loser=m.w===m.t1?m.t2:m.t1;
-            if(isReal(loser))qLosers.push(loser);
+            if(!isReal(loser))return;
+            qPairs.push({loser:loser,lostTo:m.w});
           });
-          var orderedQL=sortByStandings(qLosers);
-          fifth=orderedQL[0]||null;
-          sixth=orderedQL[1]||null;
-          seventh=orderedQL[2]||null;
-          eighth=orderedQL[3]||null;
+          qPairs.sort(function(a,b){
+            var ra=rankOfFull(a.lostTo),rb=rankOfFull(b.lostTo);
+            if(ra!==rb)return ra-rb;
+            // Fallback: saldo de gols
+            var sa=sgMap[a.loser]||0,sb=sgMap[b.loser]||0;
+            return sb-sa;
+          });
+          fifth=qPairs[0]?qPairs[0].loser:null;
+          sixth=qPairs[1]?qPairs[1].loser:null;
+          seventh=qPairs[2]?qPairs[2].loser:null;
+          eighth=qPairs[3]?qPairs[3].loser:null;
         }
 
         return[first,second,third,fourth,fifth,sixth,seventh,eighth].filter(Boolean);
@@ -4664,49 +4707,44 @@ function pB(c){
 
         // ── SIDE-BY-SIDE LAYOUT: Classificação (left) + Classificação Final (right)
         // Two cards rendered next to each other (50/50) on screens >700px;
-        // stacks vertically on mobile. The helper takes the two children and
-        // strips the marginTop they used to set (the grid spacing handles it).
-        function _sideBySidePair(leftCard,rightCard){
-          if(!leftCard&&!rightCard)return null;
-          if(!leftCard)return rightCard;
-          if(!rightCard)return leftCard;
-          // Remove marginTop from individual cards (the wrapper handles spacing)
-          if(leftCard.style)leftCard.style.marginTop='0';
-          if(rightCard.style)rightCard.style.marginTop='0';
-          var wrap=h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(360px,1fr))',gap:'14px',marginTop:'14px',alignItems:'start'}});
-          wrap.appendChild(leftCard);
-          wrap.appendChild(rightCard);
+        // Helper: wraps the Classificação Final card in a centered container
+        // with a max-width so it doesn't stretch edge-to-edge on wide screens.
+        // The standings table (V/E/D/PTS) is no longer rendered in v2 by
+        // project owner request — only the Classificação Final is shown.
+        function _centerCard(card){
+          if(!card)return null;
+          if(card.style)card.style.marginTop='0';
+          var wrap=h('div',{style:{display:'flex',justifyContent:'center',marginTop:'14px'}});
+          var inner=h('div',{style:{width:'100%',maxWidth:'640px'}});
+          inner.appendChild(card);
+          wrap.appendChild(inner);
           return wrap;
         }
 
-        // Standings tables for groups — possibly paired with Classificação Final
+        // Standings tables are intentionally hidden in v2 (Arena rule:
+        // only the Classificação Final is meaningful for the championship).
+        // The bracket structure already records every match score, so the
+        // standings data still exists internally — just not rendered.
         if(classifyRounds.length===1){
-          var st=buildStandingsTable(classifyRounds[0],'');
-          var orderedIds=getFinalOrderedIds(st&&st.sorted);
+          var orderedIds=getFinalOrderedIds();
           var fcCard=(orderedIds&&orderedIds.length)?buildFinalClassificationCard(orderedIds):null;
-          var paired=_sideBySidePair(st&&st.tbl,fcCard);
-          if(paired)main.appendChild(paired);
+          var centered=_centerCard(fcCard);
+          if(centered)main.appendChild(centered);
         } else if(classifyRounds.length>1){
-          // Multiple groups: render each standings table, then put the
-          // Final Classification card at the end on its own row.
-          // We merge all sorted arrays so getFinalOrderedIds has full ranking.
-          var allSorted=[];
-          classifyRounds.forEach(function(rd){
-            var st=buildStandingsTable(rd,rd.label||'');
-            if(st&&st.tbl)main.appendChild(st.tbl);
-            if(st&&st.sorted)allSorted=allSorted.concat(st.sorted);
-          });
-          var orderedIdsM=getFinalOrderedIds(allSorted);
+          // Multiple groups: render the Classificação Final at the end
+          var orderedIdsM=getFinalOrderedIds();
           if(orderedIdsM&&orderedIdsM.length){
             var fcCardM=buildFinalClassificationCard(orderedIdsM);
-            if(fcCardM)main.appendChild(fcCardM);
+            var centeredM=_centerCard(fcCardM);
+            if(centeredM)main.appendChild(centeredM);
           }
         } else {
-          // No classify rounds, only final round — show Final card alone
+          // No classify rounds, only final round
           var orderedIdsF=getFinalOrderedIds();
           if(orderedIdsF&&orderedIdsF.length){
             var fcCardF=buildFinalClassificationCard(orderedIdsF);
-            if(fcCardF)main.appendChild(fcCardF);
+            var centeredF=_centerCard(fcCardF);
+            if(centeredF)main.appendChild(centeredF);
           }
         }
       } else if(finalRounds.length&&!showFinals){
@@ -4715,33 +4753,28 @@ function pB(c){
           '⏳ A grande final será gerada automaticamente após todos os jogos serem registrados.'
         ));
       } else if(classifyRounds.length===1&&!finalRounds.length){
-        // PURE RODIZIO (no final round): always show standings;
-        // when all matches done, also show Classificação Final card side-by-side.
-        function _sideBySidePairR(leftCard,rightCard){
-          if(!leftCard&&!rightCard)return null;
-          if(!leftCard)return rightCard;
-          if(!rightCard)return leftCard;
-          if(leftCard.style)leftCard.style.marginTop='0';
-          if(rightCard.style)rightCard.style.marginTop='0';
-          var wrap=h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(360px,1fr))',gap:'14px',marginTop:'14px',alignItems:'start'}});
-          wrap.appendChild(leftCard);
-          wrap.appendChild(rightCard);
+        // PURE RODIZIO (no final round): standings table hidden, just the
+        // Classificação Final when all matches are done. The internal sorted
+        // order is still computed for ranking purposes.
+        function _centerCardR(card){
+          if(!card)return null;
+          if(card.style)card.style.marginTop='0';
+          var wrap=h('div',{style:{display:'flex',justifyContent:'center',marginTop:'14px'}});
+          var inner=h('div',{style:{width:'100%',maxWidth:'640px'}});
+          inner.appendChild(card);
+          wrap.appendChild(inner);
           return wrap;
         }
         var stR=buildStandingsTable(classifyRounds[0],'');
-        var fcR=null;
         if(allClassifyDone&&stR&&stR.sorted&&stR.sorted.length){
           var orderedR=stR.sorted.map(function(s){return s.t});
-          fcR=buildFinalClassificationCard(orderedR);
+          var fcR=buildFinalClassificationCard(orderedR);
+          var centeredR=_centerCardR(fcR);
+          if(centeredR)main.appendChild(centeredR);
         }
-        var pairedR=_sideBySidePairR(stR&&stR.tbl,fcR);
-        if(pairedR)main.appendChild(pairedR);
       } else if(classifyRounds.length>1&&!finalRounds.length){
-        // Multiple classify rounds without final (uncommon but supported)
-        classifyRounds.forEach(function(rd){
-          var stG=buildStandingsTable(rd,rd.label||'');
-          if(stG&&stG.tbl)main.appendChild(stG.tbl);
-        });
+        // Multiple classify rounds without final — nothing visual to show
+        // (standings hidden, no final card derivable yet).
       }
         } else {
       // Show as bracket tree (eliminatoria)
