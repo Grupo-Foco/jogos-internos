@@ -5622,10 +5622,23 @@ function mRes(c){
       h('button',{'class':'btn btn-g',onclick:function(){
         var v1=parseInt(inp1.value)||0, v2=parseInt(inp2.value)||0;
         if(v1<0||v2<0){errDiv.style.display='block';errDiv.textContent='Pontuação não pode ser negativa.';return;}
-        // Check if this is a rodizio bracket (only 1 round = no knockout advancement)
+        // Check if THIS specific match is in a knockout round.
+        // Empate is allowed in:
+        //   - Pure rodizio brackets (bracket has 1 round)
+        //   - Group/round-robin phases inside mixed brackets (round label
+        //     is "Rodízio", "Classificatório", "Grupos" or similar)
+        // Empate is blocked in elimination rounds (Quartas/Semi/Final/3º Lugar/Disputa).
         var _bkRds=S.brk[S.mod.si]&&S.brk[S.mod.si][S.mod.ct]?S.brk[S.mod.si][S.mod.ct]:[];
         var _isRodizio=_bkRds.length<=1;
-        if(v1===v2&&!_isRodizio){errDiv.style.display='block';errDiv.textContent='Empate não permitido em fase eliminatória. Defina um vencedor.';return;}
+        // Find which round this match belongs to so we can evaluate its label.
+        var _matchRound=null;
+        for(var ri=0;ri<_bkRds.length;ri++){
+          if(_bkRds[ri].m&&_bkRds[ri].m.some(function(x){return x.id===m.id})){_matchRound=_bkRds[ri];break;}
+        }
+        var _roundLbl=((_matchRound&&_matchRound.label)||'').toUpperCase();
+        var _isGroupPhase=_roundLbl.indexOf('RODIZIO')>=0||_roundLbl.indexOf('RODÍZIO')>=0||_roundLbl.indexOf('CLASSIF')>=0||_roundLbl.indexOf('GRUPO')>=0||_roundLbl.indexOf('FASE DE GRUPOS')>=0;
+        var _drawAllowed=_isRodizio||_isGroupPhase;
+        if(v1===v2&&!_drawAllowed){errDiv.style.display='block';errDiv.textContent='Empate não permitido em fase eliminatória. Defina um vencedor.';return;}
         var winner=v1===v2?null:(v1>v2?m.t1:m.t2);
         var cards={};cards[m.t1]={y:cardState.t1y,r:cardState.t1r};cards[m.t2]={y:cardState.t2y,r:cardState.t2r};
         // Save the result
