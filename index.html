@@ -771,50 +771,38 @@ function renderMasterPanel(){
 
 // -- XLSX Bracket Parser
 function parseJimXlsx(wb){
-  // The app's XLSX parser reads raw XML. This function now handles both
-  // sharedStrings and inlineStr cell formats.
+  // XLSXMini returns a map { sheetName: [ [c0,c1,...], ... ] } (array-of-arrays,
+  // values already resolved from sharedStrings/inlineStr). This reader consumes
+  // that shape directly (the old SheetJS-style wb.Sheets['A1'].v access no longer
+  // applies).
   if(!wb)return null;
-  // wb is the SheetJS workbook object  
-  var sN=Object.keys(wb.Sheets||{});
-  var ts=wb.Sheets['TABELA COMPLETA']||wb.Sheets['TABELA']||wb.Sheets[sN[0]];
-  if(!ts)return null;
-  // Helper: read cell value by column letter + row number
-  function cv(col,row){
-    var cell=ts[col+row];
-    if(!cell)return'';
-    // inlineStr format (xlsx with inline strings, no sharedStrings)
-    if(cell.v!=null)return(''+cell.v).trim();
-    if(cell.w)return cell.w.trim();
-    // SheetJS may not parse inlineStr — try raw value
-    if(cell.r){var m=cell.r.match(/<t[^>]*>([^<]*)<\/t>/);if(m)return m[1].trim();}
-    return'';
-  }
-  // For column-header reading (pass cell directly)
-  function cvCell(cell){
-    if(!cell)return'';
-    if(cell.v!=null)return(''+cell.v).trim();
-    if(cell.w)return cell.w.trim();
-    if(cell.r){var m=cell.r.match(/<t[^>]*>([^<]*)<\/t>/);if(m)return m[1].trim();}
-    return'';
-  }
-  var range=ts['!ref'];if(!range)return null;
-  var parts=range.split(':');var endRow=600;
-  if(parts[1]){var m2=parts[1].match(/(\d+)/);if(m2)endRow=parseInt(m2[1])}
-  var headers={};
-  'ABCDEFGHIJK'.split('').forEach(function(col){var cell=ts[col+'1'];if(cell){headers[col]=cvCell(cell).toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim()}});
-  var cm={hora:'D',local:'E',serie:'F',modal:'G',fase:'H',e1:'I',e2:'K'};
-  Object.entries(headers).forEach(function(e){var c=e[0],h2=e[1];
-    if(h2.indexOf('HOR')>=0)cm.hora=c;
-    if(h2.indexOf('LOCAL')>=0)cm.local=c;
-    if(h2.indexOf('MODAL')>=0)cm.modal=c;
-    if(h2.indexOf('SERIE')>=0||h2.indexOf('TURMA')>=0)cm.serie=c;
-    if(h2.indexOf('FASE')>=0)cm.fase=c;
-    if(h2.indexOf('EQUIPE')>=0&&!cm._e1s){cm.e1=c;cm._e1s=true}
-    else if(h2.indexOf('EQUIPE')>=0){cm.e2=c}
+  var sN=Object.keys(wb||{});
+  var ts=wb['TABELA COMPLETA']||wb['TABELA']||wb['CHAVEAMENTO']||wb[sN[0]];
+  if(!ts||!ts.length)return null;
+  function norm(v){return (v==null?'':(''+v)).trim()}
+  function hkey(v){return norm(v).toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim()}
+  var header=ts[0]||[];
+  // default 0-based column layout (fallback for header-less files)
+  var cm={hora:0,local:1,serie:2,modal:3,fase:4,e1:5,e2:6};
+  var e1set=false;
+  header.forEach(function(cell,idx){
+    var h2=hkey(cell); if(!h2)return;
+    if(h2.indexOf('HOR')>=0)cm.hora=idx;
+    if(h2.indexOf('LOCAL')>=0)cm.local=idx;
+    if(h2.indexOf('MODAL')>=0)cm.modal=idx;
+    if(h2.indexOf('SERIE')>=0||h2.indexOf('TURMA')>=0)cm.serie=idx;
+    if(h2.indexOf('FASE')>=0)cm.fase=idx;
+    if(h2.indexOf('EQUIPE')>=0&&!e1set){cm.e1=idx;e1set=true}
+    else if(h2.indexOf('EQUIPE')>=0){cm.e2=idx}
   });
-  function cv(col,row){var c=ts[col+row];return c?(c.v||'').toString().trim():''}
+  function cv(row,idx){return (row&&idx!=null&&row[idx]!=null)?(''+row[idx]).trim():''}
   var rows=[];
-  for(var r=2;r<=endRow;r++){var modal=cv(cm.modal,r);if(!modal)continue;var e1=cv(cm.e1,r),e2=cv(cm.e2,r);rows.push({hora:cv(cm.hora,r),local:cv(cm.local,r),modal:modal,fase:cv(cm.fase,r),e1:e1,e2:e2,serie:cv(cm.serie,r)})}
+  for(var r=1;r<ts.length;r++){
+    var row=ts[r]; if(!row)continue;
+    var modal=cv(row,cm.modal); if(!modal)continue;
+    rows.push({hora:cv(row,cm.hora),local:cv(row,cm.local),modal:modal,
+      fase:cv(row,cm.fase),e1:cv(row,cm.e1),e2:cv(row,cm.e2),serie:cv(row,cm.serie)});
+  }
   if(!rows.length)return null;
   return _buildJimRows(rows);
 }
