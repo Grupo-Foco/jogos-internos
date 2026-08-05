@@ -390,7 +390,7 @@ var XLSXMini = {
       var ra = relM[1];
       var rid2 = (ra.match(/Id="([^"]*)"/) || [])[1] || '';
       var tgt = (ra.match(/Target="([^"]*)"/) || [])[1] || '';
-      if (tgt.indexOf('worksheet') >= 0) ridToFile[rid2] = tgt.replace(/^(\.\.\/)?/, 'xl/');
+      if (tgt.indexOf('worksheet') >= 0) { var _t=tgt.replace(/^\//,'').replace(/^(\.\.\/)+/,''); if(_t.indexOf('xl/')!==0)_t='xl/'+_t; ridToFile[rid2]=_t; }
     }
 
     // Fallback: map sheet index to file
@@ -935,7 +935,16 @@ function _buildJimRows(rows){
       }
     } else if(hasSemis){
       // Classic semi → final (→ 3rd)
-      var semiRnd={r:1,label:'Semifinal',m:[]};
+      if(hasClassify){
+        var preRnd={r:1,label:'Classificatória',m:[]};
+        grp.classify.forEach(function(m){
+          var t1=tId(m.e1)||('PH_'+u());
+          var t2=tId(m.e2)||('PH_'+u());
+          preRnd.m.push(buildMatch(m,t1,t2,false));
+        });
+        rounds.push(preRnd);
+      }
+      var semiRnd={r:rounds.length+1,label:'Semifinal',m:[]};
       grp.semiMatches.forEach(function(m){
         var t1=tId(m.e1)||('PH_'+u());
         var t2=tId(m.e2)||('PH_'+u());
@@ -944,7 +953,7 @@ function _buildJimRows(rows){
       rounds.push(semiRnd);
 
       if(hasFinal||hasThird){
-        var finalRnd={r:2,label:'Final',m:[]};
+        var finalRnd={r:rounds.length+1,label:'Final',m:[]};
         grp.finalMatches.forEach(function(fm,fi){
           // Link W_ from semis
           var src1=semiRnd.m[fi*2]||semiRnd.m[0];
