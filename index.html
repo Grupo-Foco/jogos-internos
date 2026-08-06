@@ -939,6 +939,10 @@ function _buildJimRows(rows){
         if(src)return (rf.type==='W'?'W_':'L_')+src;
         return 'PH_'+u();
       }
+      // "Nº COLOCADO" (ARENA FC semis seeded by rodízio standings) → GW_ position slot,
+      // which recomputeGroupWinners fills from the rodízio standings (1º, 4º, etc.).
+      var mc=(e||'').toUpperCase().match(/(\d+)\s*[ºO°]?\s*COLOCAD[OA]/);
+      if(mc)return 'GW_'+mc[1]+'_'+bKey;
       return tId(e)||('PH_'+u());
     }
 
@@ -2790,7 +2794,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.06·r8'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.06·r9'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
