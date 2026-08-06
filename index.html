@@ -2790,7 +2790,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.06·r7'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.06·r8'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -3800,8 +3800,8 @@ function pB(c){
 
         // Rodízio (ARENA FC) → detailed points table (V/E/D/GP/SG/PTS).
         // Knockout → single "Classificação Final" ranking card.
-        if(_isRodizioRound(classifyRounds[0])){
-          var stA=buildStandingsTable(classifyRounds[0],'');
+        if(_isRodizioRound(rds[0])){
+          var stA=buildStandingsTable(rds[0],'');
           if(stA&&stA.tbl)main.appendChild(stA.tbl);
         } else {
           var orderedIds=computeBracketRanking(rds);
@@ -3813,8 +3813,8 @@ function pB(c){
       } else if(finalRounds.length&&!showFinals){
         // Rodízio in progress (e.g. ARENA FC): show the LIVE points classification
         // (V/E/D/GP/SG/PTS) so it's visible while the group games are played.
-        if(_isRodizioRound(classifyRounds[0])){
-          var stB=buildStandingsTable(classifyRounds[0],'');
+        if(_isRodizioRound(rds[0])){
+          var stB=buildStandingsTable(rds[0],'');
           if(stB&&stB.tbl)main.appendChild(stB.tbl);
         }
         // Notice: final will be generated after classify
@@ -3824,7 +3824,7 @@ function pB(c){
       } else if(classifyRounds.length===1&&!finalRounds.length){
         // PURE RODIZIO (no final round): always show standings;
         // when all matches done, also show Classificação Final card.
-        var stR=buildStandingsTable(classifyRounds[0],'');
+        var stR=buildStandingsTable(rds[0],'');
         if(stR&&stR.tbl)main.appendChild(stR.tbl);
         if(allClassifyDone&&stR&&stR.sorted&&stR.sorted.length){
           var orderedR=stR.sorted.map(function(s){return s.t});
@@ -3832,11 +3832,19 @@ function pB(c){
           if(fcR)main.appendChild(fcR);
         }
       } else if(classifyRounds.length>1&&!finalRounds.length){
-        // Multiple classify rounds without final (uncommon but supported)
-        classifyRounds.forEach(function(rd){
-          var stG=buildStandingsTable(rd,rd.label||'');
+        // Rounds weren't cleanly split into classify/final (older imported data or
+        // missing labels). Decide by the FIRST round: rodízio → points table,
+        // knockout → single Final ranking (never the per-round tables).
+        if(_isRodizioRound(rds[0])){
+          var stG=buildStandingsTable(rds[0],'');
           if(stG&&stG.tbl)main.appendChild(stG.tbl);
-        });
+        } else {
+          var ordG=computeBracketRanking(rds);
+          if(ordG&&ordG.length){
+            var fcG=buildFinalClassificationCard(ordG);
+            if(fcG)main.appendChild(fcG);
+          }
+        }
       }
         } else {
       // Show as bracket tree (eliminatoria)
