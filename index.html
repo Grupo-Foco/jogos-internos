@@ -2449,21 +2449,25 @@ function _pospts(rank){
   return sc['p'+rank]||0;
 }
 
+function _isRodizioRound(rd){
+  // A round is a rodízio (all-play-all, points-based) when a real team plays
+  // 2+ games in it. Used to decide points-table vs knockout ranking display.
+  if(!rd||!rd.m||rd.m.length<3)return false;
+  function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
+  var cnt={};
+  rd.m.forEach(function(m){[m.t1,m.t2].forEach(function(t){if(isReal(t))cnt[t]=(cnt[t]||0)+1})});
+  return Object.keys(cnt).some(function(t){return cnt[t]>=2});
+}
+
 function computeBracketRanking(rs){
   // Returns ordered array of team ids (best first) for one bracket's rounds.
   // Knockout: 1-4 from final + 3rd-place match; 5th+ by round eliminated
   // (deeper = higher) then by how far the team's conqueror advanced.
-  // Rodízio (single all-play-all round): by points (3/1/0) then goal diff (SG).
+  // Rodízio (all-play-all first round): by points (3/1/0) then goal diff (SG).
   if(!rs||!rs.length)return [];
   function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
-  // A rodízio (points-based) round is one where a team plays 2+ games in the same
-  // round (all-play-all). ARENA FC has rodízio + semis + final, so detect by team
-  // repetition in the first round rather than by round count.
-  var r0=rs[0]||{m:[]}, cnt={};
-  r0.m.forEach(function(m){[m.t1,m.t2].forEach(function(t){if(isReal(t))cnt[t]=(cnt[t]||0)+1;});});
-  var isRodizio=Object.keys(cnt).some(function(t){return cnt[t]>=2;})&&r0.m.length>=3;
-  if(isRodizio){
-    return _rodizioStandings(r0).map(function(s){return s.t});
+  if(_isRodizioRound(rs[0])){
+    return _rodizioStandings(rs[0]).map(function(s){return s.t});
   }
   var lastFR=rs[rs.length-1];
   var finalM=lastFR.m.find(function(m){return!m.is3rd});
@@ -3749,15 +3753,25 @@ function pB(c){
           main.appendChild(finalWrap);
         });
 
-        // Final ranking (replaces the per-round Classificação tables):
-        // full order 1º…Nº — champion/vice/3rd/4th then 5th+ by depth eliminated
-        // and conqueror strength (rodízio sports ordered by points then SG).
-        var orderedIds=computeBracketRanking(rds);
-        if(orderedIds&&orderedIds.length){
-          var fcCard=buildFinalClassificationCard(orderedIds);
-          if(fcCard)main.appendChild(fcCard);
+        // Rodízio (ARENA FC) → detailed points table (V/E/D/GP/SG/PTS).
+        // Knockout → single "Classificação Final" ranking card.
+        if(_isRodizioRound(classifyRounds[0])){
+          var stA=buildStandingsTable(classifyRounds[0],'');
+          if(stA&&stA.tbl)main.appendChild(stA.tbl);
+        } else {
+          var orderedIds=computeBracketRanking(rds);
+          if(orderedIds&&orderedIds.length){
+            var fcCard=buildFinalClassificationCard(orderedIds);
+            if(fcCard)main.appendChild(fcCard);
+          }
         }
       } else if(finalRounds.length&&!showFinals){
+        // Rodízio in progress (e.g. ARENA FC): show the LIVE points classification
+        // (V/E/D/GP/SG/PTS) so it's visible while the group games are played.
+        if(_isRodizioRound(classifyRounds[0])){
+          var stB=buildStandingsTable(classifyRounds[0],'');
+          if(stB&&stB.tbl)main.appendChild(stB.tbl);
+        }
         // Notice: final will be generated after classify
         main.appendChild(h('div',{style:{marginTop:'14px',padding:'14px 16px',background:'rgba(251,191,36,.08)',border:'1px dashed rgba(251,191,36,.3)',borderRadius:'10px',textAlign:'center',fontSize:'12px',color:'var(--am)'}},
           '⏳ A grande final será gerada automaticamente após todos os jogos serem registrados.'
