@@ -783,10 +783,11 @@ function parseJimXlsx(wb){
   function hkey(v){return norm(v).toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim()}
   var header=ts[0]||[];
   // default 0-based column layout (fallback for header-less files)
-  var cm={hora:0,local:1,serie:2,modal:3,fase:4,e1:5,e2:6};
+  var cm={hora:0,local:1,serie:2,modal:3,fase:4,e1:5,e2:6,jogo:-1};
   var e1set=false;
   header.forEach(function(cell,idx){
     var h2=hkey(cell); if(!h2)return;
+    if(h2.indexOf('JOGO')>=0)cm.jogo=idx;
     if(h2.indexOf('HOR')>=0)cm.hora=idx;
     if(h2.indexOf('LOCAL')>=0)cm.local=idx;
     if(h2.indexOf('MODAL')>=0)cm.modal=idx;
@@ -795,13 +796,14 @@ function parseJimXlsx(wb){
     if(h2.indexOf('EQUIPE')>=0&&!e1set){cm.e1=idx;e1set=true}
     else if(h2.indexOf('EQUIPE')>=0){cm.e2=idx}
   });
-  function cv(row,idx){return (row&&idx!=null&&row[idx]!=null)?(''+row[idx]).trim():''}
+  function cv(row,idx){return (row&&idx!=null&&idx>=0&&row[idx]!=null)?(''+row[idx]).trim():''}
   var rows=[];
   for(var r=1;r<ts.length;r++){
     var row=ts[r]; if(!row)continue;
     var modal=cv(row,cm.modal); if(!modal)continue;
     rows.push({hora:cv(row,cm.hora),local:cv(row,cm.local),modal:modal,
-      fase:cv(row,cm.fase),e1:cv(row,cm.e1),e2:cv(row,cm.e2),serie:cv(row,cm.serie)});
+      fase:cv(row,cm.fase),e1:cv(row,cm.e1),e2:cv(row,cm.e2),serie:cv(row,cm.serie),
+      jogo:cv(row,cm.jogo)});
   }
   if(!rows.length)return null;
   return _buildJimRows(rows);
@@ -867,7 +869,7 @@ function _buildJimRows(rows){
     var isGroupA=(fase==='GRUPO A');
     var isGroupB=(fase==='GRUPO B');
 
-    var match={hora:r.hora,local:r.local,e1:(r.e1||'').trim(),e2:(r.e2||'').trim(),fase:fase};
+    var match={hora:r.hora,local:r.local,e1:(r.e1||'').trim(),e2:(r.e2||'').trim(),fase:fase,jogo:(r.jogo||'').trim()};
 
     if(is3rd){grp.thirdMatches.push(match);}
     else if(isSemi){grp.semiMatches.push(match);}
@@ -896,7 +898,7 @@ function _buildJimRows(rows){
     var hasClassify=grp.classify.length>0;
 
     function buildMatch(m,t1id,t2id,is3rd){
-      var match={id:u(),r:0,t1:t1id,t2:t2id,s1:null,s2:null,w:null,dt:'',
+      var match={id:(m&&m._id)||u(),r:0,t1:t1id,t2:t2id,s1:null,s2:null,w:null,dt:'',
         lc:m.local||'',is3rd:is3rd||false,_hora:m.hora||''};
       // Store original slot codes for GW_/W_/L_ for re-computation
       if(t1id&&(t1id.indexOf('GW_')===0||t1id.indexOf('W_')===0||t1id.indexOf('L_')===0))match._slot1=t1id;
@@ -908,6 +910,34 @@ function _buildJimRows(rows){
       var t=turmasSet[nrm(e)];
       return t?t.id:null;
     }
+    // ── First pass: assign a stable id to every match in this bracket and map
+    //    jogo number → match id, so "vencedor/perdedor do jogo N" references can be
+    //    linked to W_/L_ slots (winner descends automatically when the game is played).
+    var _allM=grp.classify.concat(grp.semiMatches,grp.finalMatches,grp.thirdMatches);
+    Object.keys(grp.groupMatches).forEach(function(gk){_allM=_allM.concat(grp.groupMatches[gk])});
+    var jogoMap={};
+    _allM.forEach(function(m){
+      m._id=u();
+      var jn=(m.jogo||'').replace(/^0+/,'');
+      if(jn)jogoMap[jn]=m._id;
+    });
+    function refJogo(e){
+      var up=(e||'').toUpperCase();
+      var mw=up.match(/VENC\.?\s*JOGO\s*0*(\d+)/);
+      if(mw)return{type:'W',n:mw[1]};
+      var ml=up.match(/PERD\.?\s*JOGO\s*0*(\d+)/);
+      if(ml)return{type:'L',n:ml[1]};
+      return null;
+    }
+    function resolveTeam(e){
+      var rf=refJogo(e);
+      if(rf){
+        var src=jogoMap[rf.n];
+        if(src)return (rf.type==='W'?'W_':'L_')+src;
+        return 'PH_'+u();
+      }
+      return tId(e)||('PH_'+u());
+    }
 
     if(hasGroups){
       // ENS. MEDIO: Grupo A round + Grupo B round + ONE final round
@@ -916,8 +946,8 @@ function _buildJimRows(rows){
         var gMatches=grp.groupMatches[gk];
         var rnd={r:rounds.length+1,label:'Grupo '+gk,m:[]};
         gMatches.forEach(function(m){
-          var t1=tId(m.e1)||('PH_'+u());
-          var t2=tId(m.e2)||('PH_'+u());
+          var t1=resolveTeam(m.e1);
+          var t2=resolveTeam(m.e2);
           rnd.m.push(buildMatch(m,t1,t2,false));
         });
         rounds.push(rnd);
@@ -938,16 +968,16 @@ function _buildJimRows(rows){
       if(hasClassify){
         var preRnd={r:1,label:'Classificatória',m:[]};
         grp.classify.forEach(function(m){
-          var t1=tId(m.e1)||('PH_'+u());
-          var t2=tId(m.e2)||('PH_'+u());
+          var t1=resolveTeam(m.e1);
+          var t2=resolveTeam(m.e2);
           preRnd.m.push(buildMatch(m,t1,t2,false));
         });
         rounds.push(preRnd);
       }
       var semiRnd={r:rounds.length+1,label:'Semifinal',m:[]};
       grp.semiMatches.forEach(function(m){
-        var t1=tId(m.e1)||('PH_'+u());
-        var t2=tId(m.e2)||('PH_'+u());
+        var t1=resolveTeam(m.e1);
+        var t2=resolveTeam(m.e2);
         semiRnd.m.push(buildMatch(m,t1,t2,false));
       });
       rounds.push(semiRnd);
@@ -976,8 +1006,8 @@ function _buildJimRows(rows){
       // Rodizio / all-play-all + optional final
       var classRnd={r:1,label:'Rodizio',m:[]};
       grp.classify.forEach(function(m){
-        var t1=tId(m.e1)||('PH_'+u());
-        var t2=tId(m.e2)||('PH_'+u());
+        var t1=resolveTeam(m.e1);
+        var t2=resolveTeam(m.e2);
         classRnd.m.push(buildMatch(m,t1,t2,false));
       });
       rounds.push(classRnd);
@@ -2154,7 +2184,12 @@ function tName(id){
   if(!id||id==='BYE')return'BYE';
   if(!id||id.indexOf('PH_')===0)return'A definir';
   if(id.indexOf('GW_')===0)return'A definir';  // group winner — TBD from standings
-  if(id.indexOf('W_')===0)return'A definir';
+  if(id.indexOf('W_')===0){
+    var wmid=id.slice(2);var wf=null;
+    Object.values(S.brk).forEach(function(sb){Object.values(sb).forEach(function(rs){rs.forEach(function(r){r.m.forEach(function(m){if(m.id===wmid)wf=m})})})});
+    if(!wf||wf.w==null)return'A definir';
+    return tName(wf.w);
+  }
   if(id.indexOf('L_')===0){
     var mid=id.slice(2);var found=null;
     Object.values(S.brk).forEach(function(sb){Object.values(sb).forEach(function(rs){rs.forEach(function(r){r.m.forEach(function(m){if(m.id===mid)found=m})})})});
