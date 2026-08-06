@@ -919,7 +919,10 @@ function _buildJimRows(rows){
     _allM.forEach(function(m){
       m._id=u();
       var jn=(m.jogo||'').replace(/^0+/,'');
-      if(jn)jogoMap[jn]=m._id;
+      // First occurrence wins: the source's FINAIS section re-uses low jogo numbers
+      // (e.g. final numbered "jogo 06") which collide with classify jogo 06. Refs in
+      // semis/finals point to the EARLIER (classify/semi) game, so keep the first.
+      if(jn&&!jogoMap[jn])jogoMap[jn]=m._id;
     });
     function refJogo(e){
       var up=(e||'').toUpperCase();
@@ -2623,6 +2626,11 @@ function R(){
   // Side filter panels (.sb-filter-box) scroll independently — capture each by index
   var _filterScrolls=[];
   Array.from(document.querySelectorAll('.sb-filter-box')).forEach(function(b){_filterScrolls.push(b.scrollTop)});
+  // Inner scrollable content containers (e.g. the confronto list) scroll
+  // independently of the window — capture each by index so a background sync
+  // re-render doesn't jump them back to the top.
+  var _keepScrolls=[];
+  Array.from(document.querySelectorAll('.js-keep-scroll')).forEach(function(b){_keepScrolls.push(b.scrollTop)});
   root.innerHTML='';
   document.body.className=S.theme==='light'?'light':'';
 
@@ -2780,6 +2788,13 @@ function R(){
     requestAnimationFrame(function(){
       Array.from(document.querySelectorAll('.sb-filter-box')).forEach(function(b,i){
         if(_filterScrolls[i]!=null)b.scrollTop=_filterScrolls[i];
+      });
+    });
+  }
+  if(_keepScrolls.length){
+    requestAnimationFrame(function(){
+      Array.from(document.querySelectorAll('.js-keep-scroll')).forEach(function(b,i){
+        if(_keepScrolls[i]!=null)b.scrollTop=_keepScrolls[i];
       });
     });
   }
@@ -3476,7 +3491,7 @@ function pB(c){
       var hdr=h('div',{style:{display:'grid',gridTemplateColumns:'40px 1fr 110px',gap:'8px',padding:'6px 12px',fontSize:'10px',fontWeight:'700',color:'var(--tx3)',textTransform:'uppercase',borderBottom:'1px solid var(--br)'}},
         h('span',{},'#'),h('span',{},'Confronto'),h('span',{style:{textAlign:'right'}},'Resultado'));
       tbl.appendChild(hdr);
-      var tbody=h('div',{style:{maxHeight:'460px',overflowY:'auto'}});
+      var tbody=h('div',{'class':'js-keep-scroll',style:{maxHeight:'460px',overflowY:'auto'}});
 
       // Group header if multiple classify rounds (Grupo A, Grupo B)
       var lastLabel='';
