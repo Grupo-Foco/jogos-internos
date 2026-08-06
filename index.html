@@ -2790,6 +2790,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.06·r7'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -3526,15 +3527,23 @@ function pB(c){
       // of its GW_ slots was resolved to a real team id).
       var classifyRounds=[],finalRounds=[];
       rds.forEach(function(rd){
-        var hasFinalSlot=rd.m.some(function(m){
-          function isFinalSlot(v){
-            return v&&(v.indexOf('GW_')===0||v.indexOf('W_')===0||v.indexOf('L_')===0);
-          }
-          return isFinalSlot(m.t1)||isFinalSlot(m.t2)||
-                 isFinalSlot(m._slot1)||isFinalSlot(m._slot2)||
-                 m.is3rd;
-        });
-        if(hasFinalSlot)finalRounds.push(rd);
+        var lbl=(rd.label||'').toUpperCase();
+        var isClassLbl=lbl.indexOf('CLASSIF')>=0||lbl.indexOf('RODIZIO')>=0||lbl.indexOf('RODÍZIO')>=0||lbl.indexOf('GRUPO')>=0;
+        var isFinalLbl=lbl.indexOf('SEMI')>=0||lbl.indexOf('FINAL')>=0||lbl.indexOf('QUARTA')>=0||lbl.indexOf('OITAVA')>=0;
+        var isFinalRound;
+        if(isClassLbl){
+          // A classify/rodízio round stays classify even if it contains a play-in
+          // game with a W_ slot (e.g. "time x vencedor jogo 01").
+          isFinalRound=false;
+        } else if(isFinalLbl||rd.m.some(function(m){return m.is3rd})){
+          isFinalRound=true;
+        } else {
+          // No clear label: it's a final round only if EVERY match's participants
+          // come from slots (no direct real team seeded into it).
+          function slotRef(s){return s&&(s.indexOf('W_')===0||s.indexOf('L_')===0||s.indexOf('GW_')===0)}
+          isFinalRound=rd.m.every(function(m){return slotRef(m._slot1||m.t1)&&slotRef(m._slot2||m.t2)});
+        }
+        if(isFinalRound)finalRounds.push(rd);
         else classifyRounds.push(rd);
       });
       if(!classifyRounds.length){classifyRounds=rds;finalRounds=[];}
