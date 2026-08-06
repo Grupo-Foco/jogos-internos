@@ -2449,6 +2449,57 @@ function _pospts(rank){
   return sc['p'+rank]||0;
 }
 
+function computeBracketRanking(rs){
+  // Returns ordered array of team ids (best first) for one bracket's rounds.
+  // Knockout: 1-4 from final + 3rd-place match; 5th+ by round eliminated
+  // (deeper = higher) then by how far the team's conqueror advanced.
+  // Rodízio (single all-play-all round): by points (3/1/0) then goal diff (SG).
+  if(!rs||!rs.length)return [];
+  function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
+  // A rodízio (points-based) round is one where a team plays 2+ games in the same
+  // round (all-play-all). ARENA FC has rodízio + semis + final, so detect by team
+  // repetition in the first round rather than by round count.
+  var r0=rs[0]||{m:[]}, cnt={};
+  r0.m.forEach(function(m){[m.t1,m.t2].forEach(function(t){if(isReal(t))cnt[t]=(cnt[t]||0)+1;});});
+  var isRodizio=Object.keys(cnt).some(function(t){return cnt[t]>=2;})&&r0.m.length>=3;
+  if(isRodizio){
+    return _rodizioStandings(r0).map(function(s){return s.t});
+  }
+  var lastFR=rs[rs.length-1];
+  var finalM=lastFR.m.find(function(m){return!m.is3rd});
+  var thirdM=lastFR.m.find(function(m){return m.is3rd});
+  var explicit=[];
+  if(finalM&&finalM.w&&isReal(finalM.w)){
+    explicit[0]=finalM.w;
+    var s=finalM.w===finalM.t1?finalM.t2:finalM.t1; if(isReal(s))explicit[1]=s;
+  }
+  if(thirdM&&thirdM.w&&isReal(thirdM.w)){
+    explicit[2]=thirdM.w;
+    var f=thirdM.w===thirdM.t1?thirdM.t2:thirdM.t1; if(isReal(f))explicit[3]=f;
+  }
+  var elimRound={},conq={},teams={};
+  rs.forEach(function(rd,ri){
+    rd.m.forEach(function(m){
+      if(isReal(m.t1))teams[m.t1]=true; if(isReal(m.t2))teams[m.t2]=true;
+      if(m.w&&isReal(m.w)){
+        var loser=m.w===m.t1?m.t2:m.t1;
+        if(isReal(loser)){elimRound[loser]=ri;conq[loser]=m.w;}
+      }
+    });
+  });
+  var exSet={}; explicit.forEach(function(t){if(t)exSet[t]=true});
+  function depthOf(t){return (t&&elimRound[t]==null)?999:(elimRound[t]!=null?elimRound[t]:-1);}
+  var rest=Object.keys(teams).filter(function(t){return !exSet[t]});
+  rest.sort(function(a,b){
+    var ea=elimRound[a]==null?-1:elimRound[a], eb=elimRound[b]==null?-1:elimRound[b];
+    if(eb!==ea)return eb-ea;                 // eliminated deeper → higher
+    var da=depthOf(conq[a]), db=depthOf(conq[b]);
+    if(db!==da)return db-da;                 // conqueror advanced further → higher
+    return 0;
+  });
+  return explicit.filter(Boolean).concat(rest);
+}
+
 function calcRk(){
   var sc=S.scoring||{p1:10,p2:8,p3:6,p4:4,pWin:3,pWO:-2};
   var pts={};
@@ -2486,62 +2537,31 @@ function calcRk(){
       }
     })})});
   });
-  // Position points: find finals and assign 1st/2nd/3rd/4th
+  // Position points from the FINAL RANKING of each bracket (computeBracketRanking):
+  // 1º…Nº map to position points (p1..p8). Awarded only when the bracket is
+  // complete — final decided (knockout) or all games played (rodízio) — so teams
+  // don't get points merely for appearing in the bracket.
+  function _posPts(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
   Object.entries(S.brk).forEach(function(e1){
     Object.entries(e1[1]).forEach(function(e2){
       var rs=e2[1];if(!rs||!rs.length)return;
-      var finalRound=rs[rs.length-1];if(!finalRound||!finalRound.m)return;
-      // Find the main final (not 3rd place)
-      var finalMatch=finalRound.m.find(function(m){return!m.is3rd});
-      var thirdMatch=finalRound.m.find(function(m){return m.is3rd});
-      // For rodizio: final round = all matches, assign by standings (3pts/1pt + tiebreakers)
-      var totalRnds=rs.length;
-      // Rodizio = single round-robin. Threshold relaxed: 3+ teams produce 3+ matches.
-      // (Old check >3 incorrectly excluded 3-team rodizios.)
-      var isRodizio=totalRnds===1&&rs[0]&&rs[0].m&&rs[0].m.length>=3;
-      if(isRodizio){
-        // Only award position points when ALL matches in the rodizio are complete.
-        // Otherwise teams would receive 1st/2nd/3rd points just by appearing in the
-        // bracket, even before any game has a score.
-        var allDone=rs[0].m.every(function(m){
-          var isPH1=!m.t1||m.t1.indexOf('PH_')===0||m.t1.indexOf('W_')===0||m.t1.indexOf('L_')===0||m.t1.indexOf('GW_')===0;
-          var isPH2=!m.t2||m.t2.indexOf('PH_')===0||m.t2.indexOf('W_')===0||m.t2.indexOf('L_')===0||m.t2.indexOf('GW_')===0;
-          return (isPH1&&isPH2)||(m.s1!=null&&m.s2!=null);
-        });
-        if(!allDone)return;
-        var sortedStandings=_rodizioStandings(rs[0]);
-        var posKeys=['p1','p2','p3','p4','p5','p6','p7','p8'];
-        sortedStandings.forEach(function(st,pi){
-          var tid=st.t,pk=posKeys[pi];
-          var pval=sc.positions&&sc.positions[pi]?sc.positions[pi].pts:(sc[pk]||0);
-          if(!pts[tid])pts[tid]={w:0,d:0,l:0,p:0,wo:0,draws:0};
-          pts[tid].p+=pval;
-        });
-        return;
+      function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
+      var r0=rs[0]||{m:[]},cnt={};
+      r0.m.forEach(function(m){[m.t1,m.t2].forEach(function(t){if(isReal(t))cnt[t]=(cnt[t]||0)+1})});
+      var isRod=Object.keys(cnt).some(function(t){return cnt[t]>=2})&&r0.m.length>=3;
+      var complete;
+      if(isRod){
+        complete=r0.m.every(function(m){var p1=!isReal(m.t1),p2=!isReal(m.t2);return (p1&&p2)||(m.s1!=null&&m.s2!=null);});
+      } else {
+        var lastFR=rs[rs.length-1];var fm=lastFR.m.find(function(m){return!m.is3rd});
+        complete=!!(fm&&fm.w&&isReal(fm.w));
       }
-      if(finalMatch&&finalMatch.w){
-        var first=finalMatch.w;
-        var second=finalMatch.w===finalMatch.t1?finalMatch.t2:finalMatch.t1;
-        // Use pospts helper to get position points (supports both old p1..p8 and new positions[])
-        function pp(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
-        if(first&&first!=='BYE'&&first.indexOf('W_')!==0&&first.indexOf('L_')!==0&&first.indexOf('GW_')!==0&&first.indexOf('PH_')!==0){
-          if(!pts[first])pts[first]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[first].p+=pp(1);
-        }
-        if(second&&second!=='BYE'&&second.indexOf('W_')!==0&&second.indexOf('L_')!==0&&second.indexOf('GW_')!==0&&second.indexOf('PH_')!==0){
-          if(!pts[second])pts[second]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[second].p+=pp(2);
-        }
-      }
-      if(thirdMatch&&thirdMatch.w){
-        function pp3(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
-        var third=thirdMatch.w;
-        var fourth=thirdMatch.w===thirdMatch.t1?thirdMatch.t2:thirdMatch.t1;
-        if(third&&third!=='BYE'&&third.indexOf('W_')!==0&&third.indexOf('L_')!==0&&third.indexOf('GW_')!==0&&third.indexOf('PH_')!==0){
-          if(!pts[third])pts[third]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[third].p+=pp3(3);
-        }
-        if(fourth&&fourth!=='BYE'&&fourth.indexOf('W_')!==0&&fourth.indexOf('L_')!==0&&fourth.indexOf('GW_')!==0&&fourth.indexOf('PH_')!==0){
-          if(!pts[fourth])pts[fourth]={w:0,d:0,l:0,p:0,wo:0,draws:0};pts[fourth].p+=pp3(4);
-        }
-      }
+      if(!complete)return;
+      computeBracketRanking(rs).forEach(function(tid,i){
+        if(!isReal(tid))return;
+        if(!pts[tid])pts[tid]={w:0,d:0,l:0,p:0,wo:0,draws:0};
+        pts[tid].p+=_posPts(i+1);
+      });
     });
   });
   // Resolve id -> name: try enrollment first, then turma direct (imported brackets)
@@ -3729,19 +3749,10 @@ function pB(c){
           main.appendChild(finalWrap);
         });
 
-        // Standings tables for groups
-        if(classifyRounds.length===1){
-          var st=buildStandingsTable(classifyRounds[0],'');
-          if(st&&st.tbl)main.appendChild(st.tbl);
-        } else if(classifyRounds.length>1){
-          classifyRounds.forEach(function(rd){
-            var st=buildStandingsTable(rd,rd.label||'');
-            if(st&&st.tbl)main.appendChild(st.tbl);
-          });
-        }
-
-        // Final classification card (1º/2º/3º/4º from the actual final results)
-        var orderedIds=getFinalOrderedIds();
+        // Final ranking (replaces the per-round Classificação tables):
+        // full order 1º…Nº — champion/vice/3rd/4th then 5th+ by depth eliminated
+        // and conqueror strength (rodízio sports ordered by points then SG).
+        var orderedIds=computeBracketRanking(rds);
         if(orderedIds&&orderedIds.length){
           var fcCard=buildFinalClassificationCard(orderedIds);
           if(fcCard)main.appendChild(fcCard);
