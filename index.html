@@ -2797,7 +2797,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r17'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r18'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -8290,25 +8290,29 @@ function upsertResultados(bracket,genero,matches){
   }).catch(function(e){console.error('upsertResultados',e)});
 }
 function applyResultados(rows){
-  if(!rows||!rows.length)return false;
-  var byMatch={};rows.forEach(function(r){byMatch[r.match_id]=r;});
-  var touched={},any=false;
-  Object.keys(S.brk).forEach(function(bk){
-    Object.keys(S.brk[bk]).forEach(function(ct){
-      S.brk[bk][ct].forEach(function(rd){rd.m.forEach(function(m){
-        var r=byMatch[m.id];
-        if(r){
-          var ns1=(r.s1==null?null:r.s1),ns2=(r.s2==null?null:r.s2),nw=r.vencedor||null;
-          if(m.s1!==ns1||m.s2!==ns2||m.w!==nw){
-            m.s1=ns1;m.s2=ns2;m.w=nw;m.isDraw=!!r.is_draw;
-            touched[bk+'||'+ct]=[bk,ct];any=true;
+  try{
+    if(!rows||!rows.length||!S.brk)return false;
+    var byMatch={};rows.forEach(function(r){byMatch[r.match_id]=r;});
+    var touched={},any=false;
+    Object.keys(S.brk).forEach(function(bk){
+      if(!S.brk[bk])return;
+      Object.keys(S.brk[bk]).forEach(function(ct){
+        var rds=S.brk[bk][ct];if(!rds||!rds.forEach)return;
+        rds.forEach(function(rd){(rd.m||[]).forEach(function(m){
+          var r=byMatch[m.id];
+          if(r){
+            var ns1=(r.s1==null?null:r.s1),ns2=(r.s2==null?null:r.s2),nw=r.vencedor||null;
+            if(m.s1!==ns1||m.s2!==ns2||m.w!==nw){
+              m.s1=ns1;m.s2=ns2;m.w=nw;m.isDraw=!!r.is_draw;
+              touched[bk+'||'+ct]=[bk,ct];any=true;
+            }
           }
-        }
-      })});
+        })});
+      });
     });
-  });
-  Object.keys(touched).forEach(function(k){var kc=touched[k];_reflowBracket(S.brk[kc[0]][kc[1]]);recomputeGroupWinners(kc[0],kc[1]);});
-  return any;
+    Object.keys(touched).forEach(function(k){var kc=touched[k];try{_reflowBracket(S.brk[kc[0]][kc[1]]);recomputeGroupWinners(kc[0],kc[1]);}catch(e){}});
+    return any;
+  }catch(e){console.error('applyResultados',e);return false;}
 }
 function loadResultados(cb){
   if(!S.sb.url||!S.sb.key||!MT.schoolCode){if(cb)cb(false);return;}
@@ -8322,10 +8326,12 @@ var _resPollTimer=null;
 function startResultadosPoll(){
   if(_resPollTimer||!MT.schoolCode||MT.isMaster)return;
   _resPollTimer=setInterval(function(){
-    if(document.hidden)return;
-    loadResultados(function(changed){
-      if(changed&&!S.mod&&!document.querySelector('input:focus, textarea:focus')){R();}
-    });
+    try{
+      if(document.hidden||!S.auth)return;   // only poll when logged in (never on the login screen)
+      loadResultados(function(changed){
+        if(changed&&!S.mod&&!document.querySelector('input:focus, textarea:focus')){R();}
+      });
+    }catch(e){console.error('resPoll',e);}
   },5000);
 }
 
@@ -8684,7 +8690,7 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
     // Real-time collaboration: apply per-confronto results ON TOP of the loaded
     // structure (the `resultados` table is authoritative for placares), then start
     // live polling so other mesários' entries appear automatically.
-    loadResultados(function(){startResultadosPoll();R();});
+    loadResultados(function(){startResultadosPoll();if(S.auth)R();});
     if(ok){R()}else{R()} // Render either way after load attempt
     // Check if school is active
     if(MT.schoolCode){
