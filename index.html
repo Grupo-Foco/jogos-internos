@@ -2794,7 +2794,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r12'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r13'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -6684,7 +6684,7 @@ function exportSumula(bkey,ct,focusMid){
     +'.toolbar{position:sticky;top:0;background:#0f172a;color:#fff;padding:12px 18px;display:flex;gap:14px;align-items:center;z-index:10}'
     +'.btn{background:#22c55e;color:#04210f;border:0;border-radius:8px;padding:9px 16px;font-weight:800;cursor:pointer;font-size:14px}'
     +'.sheet{background:#fff;margin:18px auto;box-shadow:0 2px 12px rgba(0,0,0,.15)}'
-    +'.sheet-a{width:297mm;min-height:210mm;padding:12mm}.sheet-b{width:210mm;min-height:297mm;padding:10mm}'
+    +'.sheet-a{width:297mm;min-height:210mm;padding:12mm}.sheet-b{width:210mm;min-height:297mm;padding:7mm}'
     +'.hdr{text-align:center;margin-bottom:8px}.logo{height:70px;object-fit:contain}.logo.hdr-b,.hdr-b .logo{height:60px}'
     +'.title{font-weight:800;text-decoration:underline;font-size:20px;margin-top:2px}.subttl{font-size:12px;color:#333}'
     +'.fields{font-size:14px;line-height:1.9;margin:6px 0 10px;text-align:center}.fields .fill{display:inline-block;border-bottom:1px solid #000;width:200px}'
@@ -6692,10 +6692,10 @@ function exportSumula(bkey,ct,focusMid){
     +'.setlbl{font-size:13px;font-weight:700;margin:8px 0 3px}table{border-collapse:collapse;width:100%;border:1px solid #000}'
     +'.ptgrid td,.ptgrid th{border:1px solid #000;text-align:center;font-size:13px;height:26px}.ptgrid .tname{width:110px;font-weight:700;background:#f3f4f6;text-align:left;padding-left:8px;font-size:12px}'
     +'.rflabel{text-align:center;font-weight:800;margin:12px 0 5px;font-size:15px}.rfinal{width:70%;margin:0 auto}.rfinal th{border:1px solid #000;background:#f3f4f6;text-align:left;padding:5px 10px;font-size:13px;width:45%}.rfinal td{border:1px solid #000;height:26px}'
-    +'.gblock{border:1px solid #000;margin-bottom:6px}.ghead{background:#eef2f7;font-weight:800;text-align:center;font-size:13px;padding:3px;border-bottom:1px solid #000}.tag{color:#b45309;font-size:11px}'
-    +'.gmeta{display:flex;justify-content:space-between;font-size:12px;padding:4px 8px;border-bottom:1px solid #000}'
+    +'.gblock{border:1px solid #000;margin-bottom:2px;page-break-inside:avoid}.ghead{background:#eef2f7;font-weight:800;text-align:center;font-size:10px;padding:1px;border-bottom:1px solid #000}.tag{color:#b45309;font-size:9px}'
+    +'.gmeta{display:flex;justify-content:space-between;font-size:9px;padding:1px 8px;border-bottom:1px solid #000}'
     +'td.mk{background:#22c55e;color:#04210f;font-weight:800}'
-    +'.bptgrid td,.bptgrid th{border:1px solid #000;text-align:center;font-size:11px;height:22px;width:4%}.bptgrid .bteam{width:16%;text-align:left;padding-left:6px;font-weight:700;font-size:11px;background:#f7f8fa}.xrow td{border:1px solid #000;height:22px}.xcell{font-weight:800}'
+    +'.bptgrid td,.bptgrid th{border:1px solid #000;text-align:center;font-size:8px;height:13px;width:4%}.bptgrid .bteam{width:16%;text-align:left;padding-left:5px;font-weight:700;font-size:9px;background:#f7f8fa}.xrow td{border:1px solid #000;height:9px}.xcell{font-weight:800;font-size:8px}'
     +'@page landscapePage{size:A4 landscape;margin:8mm}@page portraitPage{size:A4 portrait;margin:8mm}'
     +'@media print{body{background:#fff}.toolbar{display:none}.sheet{margin:0;box-shadow:none;width:auto;min-height:auto}.sheet-a{page:landscapePage}.sheet-b{page:portraitPage}.sheet{page-break-after:always}}'
     +'</style></head><body>'
