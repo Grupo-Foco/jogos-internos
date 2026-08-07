@@ -2797,7 +2797,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r16'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r17'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -6711,7 +6711,7 @@ function exportSumula(bkey,ct,focusMid){
     +'.sheet-b.fill .hdr-b{flex:0 0 auto}'
     +'.sheet-b.fill .gblock{flex:1 1 0;min-height:0;margin-bottom:0;display:flex;flex-direction:column;page-break-inside:auto}'
     +'.sheet-b.fill .ghead,.sheet-b.fill .gmeta{flex:0 0 auto}'
-    +'.sheet-b.fill .bptgrid{flex:1 1 auto;height:100%}'
+    +'.sheet-b.fill .bptgrid{flex:1 1 0;min-height:0}'
     +'.sheet-b.fill .bptgrid td,.sheet-b.fill .bptgrid th{font-size:14px}.sheet-b.fill .ghead{font-size:13px}.sheet-b.fill .gmeta{font-size:12px}'
     +'.sheet-b.fill .xrow td{height:14px}'
     +'@page landscapePage{size:A4 landscape;margin:6mm}@page portraitPage{size:A4 portrait;margin:5mm}'
