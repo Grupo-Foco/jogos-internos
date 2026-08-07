@@ -2797,7 +2797,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r18'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r19'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -6677,18 +6677,26 @@ function exportSumula(bkey,ct,focusMid){
         +'<div class="rflabel">RESULTADO FINAL:</div><table class="rfinal"><tbody><tr><th>'+g.t1+'</th><td>'+(g.played?g.s1:'')+'</td></tr><tr><th>'+g.t2+'</th><td>'+(g.played?g.s2:'')+'</td></tr></tbody></table></div>';
     });
   } else {
-    // Format B: one consolidated portrait sheet with all games (running score grid 1-21)
+    // Format B: consolidated portrait sheet. Row heights are COMPUTED so the games
+    // fill one A4 page — no flexbox (which Chrome print rendered with a stray line
+    // through the numbers). Fixed heights render identically in every engine.
+    var nG=games.length;
+    var rowH=24,xH=14;
+    if(nG<=9){
+      var perBlock=Math.floor((1085-58)/nG);   // ~header 60px, rest split per game
+      var gridH=perBlock-38;                     // ghead+gmeta ≈ 38px
+      rowH=Math.max(20,Math.floor((gridH-14)/2));// two team rows + a 14px x-row
+    }
     var blocks='';
     games.forEach(function(g){
-      function prow(nm,sc){var c='';for(var i=1;i<=21;i++)c+='<td'+((sc!=null&&i<=sc)?' class="mk"':'')+'>'+i+'</td>';return '<tr><th class="bteam">'+nm+'</th>'+c+'</tr>';}
+      function prow(nm,sc){var c='';for(var i=1;i<=21;i++)c+='<td'+((sc!=null&&i<=sc)?' class="mk"':'')+' style="height:'+rowH+'px">'+i+'</td>';return '<tr><th class="bteam" style="height:'+rowH+'px">'+nm+'</th>'+c+'</tr>';}
       blocks+='<div class="gblock"><div class="ghead">JOGO '+(g.n<10?'0':'')+g.n+(g.fase?' <span class="tag">'+g.fase+'</span>':'')+'</div>'
         +'<div class="gmeta"><span><b>Data:</b> ______</span><span><b>Horário:</b> '+g.hora+'</span><span><b>Gênero:</b> '+ct+'</span></div>'
         +'<table class="bptgrid"><tbody>'+prow(g.t1,g.played?g.s1:null)
-        +'<tr class="xrow"><th></th><td colspan="10"></td><td class="xcell">x</td><td colspan="10"></td></tr>'
+        +'<tr class="xrow"><th style="height:'+xH+'px"></th><td colspan="10"></td><td class="xcell">x</td><td colspan="10"></td></tr>'
         +prow(g.t2,g.played?g.s2:null)+'</tbody></table></div>';
     });
-    var _fill=games.length<=9?' fill':'';
-    body='<div class="sheet sheet-b'+_fill+'"><div class="hdr hdr-b">'+logoImg+'<div class="title">SÚMULA '+sportName+'</div><div class="subttl">'+serieLabel+' · '+ct+(games[0]&&games[0].local?' · '+games[0].local:'')+'</div></div>'+blocks+'</div>';
+    body='<div class="sheet sheet-b"><div class="hdr hdr-b">'+logoImg+'<div class="title">SÚMULA '+sportName+'</div><div class="subttl">'+serieLabel+' · '+ct+(games[0]&&games[0].local?' · '+games[0].local:'')+'</div></div>'+blocks+'</div>';
   }
   var html='<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Súmula — '+sportName+' '+ct+' '+serieLabel+'</title><style>'
     +'*{box-sizing:border-box}body{margin:0;background:#eceff3;font-family:Arial,Helvetica,sans-serif;color:#111;-webkit-print-color-adjust:exact;print-color-adjust:exact}'
@@ -6706,14 +6714,7 @@ function exportSumula(bkey,ct,focusMid){
     +'.gblock{border:1px solid #000;margin-bottom:3px;page-break-inside:avoid}.ghead{background:#eef2f7;font-weight:800;text-align:center;font-size:12px;padding:3px;border-bottom:1px solid #000}.tag{color:#b45309;font-size:10px}'
     +'.gmeta{display:flex;justify-content:space-between;font-size:11px;padding:3px 8px;border-bottom:1px solid #000}'
     +'td.mk{background:#22c55e;color:#04210f;font-weight:800}'
-    +'.bptgrid td,.bptgrid th{border:1px solid #000;text-align:center;font-size:12px;height:22px;width:4%}.bptgrid .bteam{width:16%;text-align:left;padding-left:6px;font-weight:700;font-size:12px;background:#f7f8fa}.xrow td{border:1px solid #000;height:14px}.xcell{font-weight:800;font-size:11px}'
-    +'.sheet-b.fill{height:283mm;min-height:0;display:flex;flex-direction:column;gap:1.5mm}'
-    +'.sheet-b.fill .hdr-b{flex:0 0 auto}'
-    +'.sheet-b.fill .gblock{flex:1 1 0;min-height:0;margin-bottom:0;display:flex;flex-direction:column;page-break-inside:auto}'
-    +'.sheet-b.fill .ghead,.sheet-b.fill .gmeta{flex:0 0 auto}'
-    +'.sheet-b.fill .bptgrid{flex:1 1 0;min-height:0}'
-    +'.sheet-b.fill .bptgrid td,.sheet-b.fill .bptgrid th{font-size:14px}.sheet-b.fill .ghead{font-size:13px}.sheet-b.fill .gmeta{font-size:12px}'
-    +'.sheet-b.fill .xrow td{height:14px}'
+    +'.bptgrid td,.bptgrid th{border:1px solid #000;text-align:center;font-size:13px;width:4%;vertical-align:middle}.bptgrid .bteam{width:16%;text-align:left;padding-left:6px;font-weight:700;font-size:13px;background:#f7f8fa}.xrow td{border:1px solid #000}.xcell{font-weight:800;font-size:12px}'
     +'@page landscapePage{size:A4 landscape;margin:6mm}@page portraitPage{size:A4 portrait;margin:5mm}'
     +'@media print{body{background:#fff}.toolbar{display:none}.sheet{margin:0;box-shadow:none;width:auto;min-height:auto}.sheet-a{page:landscapePage}.sheet-b{page:portraitPage}.sheet{page-break-after:always}}'
     +'</style></head><body>'
