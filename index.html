@@ -2797,7 +2797,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r19'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r20'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -6683,7 +6683,7 @@ function exportSumula(bkey,ct,focusMid){
     var nG=games.length;
     var rowH=24,xH=14;
     if(nG<=9){
-      var perBlock=Math.floor((1085-58)/nG);   // ~header 60px, rest split per game
+      var perBlock=Math.floor((925-52)/nG);   // ~header 60px, rest split per game
       var gridH=perBlock-38;                     // ghead+gmeta ≈ 38px
       rowH=Math.max(20,Math.floor((gridH-14)/2));// two team rows + a 14px x-row
     }
