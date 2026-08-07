@@ -2219,7 +2219,7 @@ function _reflowBracket(rds){
   // result was corrected or cleared), that match's own result is invalidated so the
   // wrong team never stays "descended". Rounds are processed in order so the change
   // cascades all the way down in a single pass.
-  if(!rds||!rds.length)return;
+  if(!rds||!rds.length)return [];
   var byId={};
   rds.forEach(function(r){r.m.forEach(function(m){byId[m.id]=m})});
   function resolvedFor(slot){
@@ -2231,6 +2231,7 @@ function _reflowBracket(rds){
     if(pre==='L_')return src.w===src.t1?src.t2:src.t1; // loser
     return null;
   }
+  var _cleared=[];
   rds.forEach(function(r){r.m.forEach(function(m){
     ['1','2'].forEach(function(k){
       var slot=m['_slot'+k];
@@ -2239,11 +2240,13 @@ function _reflowBracket(rds){
         var newVal=resolved||slot;              // undecided → keep the placeholder code
         if(m['t'+k]!==newVal){
           m['t'+k]=newVal;
+          if(m.s1!=null||m.s2!=null||m.w!=null)_cleared.push(m); // was played, now invalidated
           m.s1=null;m.s2=null;m.w=null;m.isDraw=false; // participant changed → clear result
         }
       }
     });
   })});
+  return _cleared;
 }
 
 function recomputeGroupWinners(bk,ct){
@@ -2794,7 +2797,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r13'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r15'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -5605,8 +5608,11 @@ function mRes(c){
           if(x.id===m.id)return Object.assign({},x,{s1:null,s2:null,w:null,isDraw:false});
           return x;
         })})});
-        _reflowBracket(S.brk[S.mod.si][S.mod.ct]);
+        var _clC=_reflowBracket(S.brk[S.mod.si][S.mod.ct]);
         recomputeGroupWinners(S.mod.si,S.mod.ct);
+        // Real-time sync: upsert the cleared match + any downstream also cleared
+        var _clM=null;S.brk[S.mod.si][S.mod.ct].forEach(function(r){r.m.forEach(function(x){if(x.id===m.id)_clM=x})});
+        upsertResultados(S.mod.si,S.mod.ct,(_clM?[_clM]:[]).concat(_clC||[]));
         S.mod=null;R();
       }},'🗑 Limpar'):null,
       h('button',{'class':'btn btn-g',onclick:function(){
@@ -5626,8 +5632,12 @@ function mRes(c){
         })})});
         // Re-resolve W_/L_ slots from this result (and clear any now-stale downstream
         // results), then recompute group/standings-based (GW_) slots.
-        _reflowBracket(S.brk[S.mod.si][S.mod.ct]);
+        var _clearedS=_reflowBracket(S.brk[S.mod.si][S.mod.ct]);
         recomputeGroupWinners(S.mod.si,S.mod.ct);
+        // Real-time sync: upsert ONLY the edited match + downstream matches the reflow
+        // cleared — never the whole bracket, so another mesário's game is never overwritten.
+        var _editedS=null;S.brk[S.mod.si][S.mod.ct].forEach(function(r){r.m.forEach(function(x){if(x.id===m.id)_editedS=x})});
+        upsertResultados(S.mod.si,S.mod.ct,(_editedS?[_editedS]:[]).concat(_clearedS||[]));
         var cardsTxt='';
         if(cardState.t1y||cardState.t1r||cardState.t2y||cardState.t2r){
           cardsTxt=' (cartões: '+tName(m.t1)+' 🟨'+cardState.t1y+' 🟥'+cardState.t1r+', '+tName(m.t2)+' 🟨'+cardState.t2y+' 🟥'+cardState.t2r+')';
@@ -6677,7 +6687,8 @@ function exportSumula(bkey,ct,focusMid){
         +'<tr class="xrow"><th></th><td colspan="10"></td><td class="xcell">x</td><td colspan="10"></td></tr>'
         +prow(g.t2,g.played?g.s2:null)+'</tbody></table></div>';
     });
-    body='<div class="sheet sheet-b"><div class="hdr hdr-b">'+logoImg+'<div class="title">SÚMULA '+sportName+'</div><div class="subttl">'+serieLabel+' · '+ct+(games[0]&&games[0].local?' · '+games[0].local:'')+'</div></div>'+blocks+'</div>';
+    var _fill=games.length<=9?' fill':'';
+    body='<div class="sheet sheet-b'+_fill+'"><div class="hdr hdr-b">'+logoImg+'<div class="title">SÚMULA '+sportName+'</div><div class="subttl">'+serieLabel+' · '+ct+(games[0]&&games[0].local?' · '+games[0].local:'')+'</div></div>'+blocks+'</div>';
   }
   var html='<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Súmula — '+sportName+' '+ct+' '+serieLabel+'</title><style>'
     +'*{box-sizing:border-box}body{margin:0;background:#eceff3;font-family:Arial,Helvetica,sans-serif;color:#111}'
@@ -6692,10 +6703,17 @@ function exportSumula(bkey,ct,focusMid){
     +'.setlbl{font-size:13px;font-weight:700;margin:8px 0 3px}table{border-collapse:collapse;width:100%;border:1px solid #000}'
     +'.ptgrid td,.ptgrid th{border:1px solid #000;text-align:center;font-size:13px;height:26px}.ptgrid .tname{width:110px;font-weight:700;background:#f3f4f6;text-align:left;padding-left:8px;font-size:12px}'
     +'.rflabel{text-align:center;font-weight:800;margin:12px 0 5px;font-size:15px}.rfinal{width:70%;margin:0 auto}.rfinal th{border:1px solid #000;background:#f3f4f6;text-align:left;padding:5px 10px;font-size:13px;width:45%}.rfinal td{border:1px solid #000;height:26px}'
-    +'.gblock{border:1px solid #000;margin-bottom:2px;page-break-inside:avoid}.ghead{background:#eef2f7;font-weight:800;text-align:center;font-size:10px;padding:1px;border-bottom:1px solid #000}.tag{color:#b45309;font-size:9px}'
-    +'.gmeta{display:flex;justify-content:space-between;font-size:9px;padding:1px 8px;border-bottom:1px solid #000}'
+    +'.gblock{border:1px solid #000;margin-bottom:3px;page-break-inside:avoid}.ghead{background:#eef2f7;font-weight:800;text-align:center;font-size:12px;padding:3px;border-bottom:1px solid #000}.tag{color:#b45309;font-size:10px}'
+    +'.gmeta{display:flex;justify-content:space-between;font-size:11px;padding:3px 8px;border-bottom:1px solid #000}'
     +'td.mk{background:#22c55e;color:#04210f;font-weight:800}'
-    +'.bptgrid td,.bptgrid th{border:1px solid #000;text-align:center;font-size:8px;height:13px;width:4%}.bptgrid .bteam{width:16%;text-align:left;padding-left:5px;font-weight:700;font-size:9px;background:#f7f8fa}.xrow td{border:1px solid #000;height:9px}.xcell{font-weight:800;font-size:8px}'
+    +'.bptgrid td,.bptgrid th{border:1px solid #000;text-align:center;font-size:12px;height:22px;width:4%}.bptgrid .bteam{width:16%;text-align:left;padding-left:6px;font-weight:700;font-size:12px;background:#f7f8fa}.xrow td{border:1px solid #000;height:14px}.xcell{font-weight:800;font-size:11px}'
+    +'.sheet-b.fill{height:283mm;min-height:0;display:flex;flex-direction:column;gap:2mm}'
+    +'.sheet-b.fill .hdr-b{flex:0 0 auto}'
+    +'.sheet-b.fill .gblock{flex:1 1 0;min-height:0;margin-bottom:0;display:flex;flex-direction:column}'
+    +'.sheet-b.fill .ghead,.sheet-b.fill .gmeta{flex:0 0 auto}'
+    +'.sheet-b.fill .bptgrid{flex:1 1 auto;height:100%}'
+    +'.sheet-b.fill .bptgrid td,.sheet-b.fill .bptgrid th{font-size:14px}.sheet-b.fill .ghead{font-size:13px}.sheet-b.fill .gmeta{font-size:12px}'
+    +'.sheet-b.fill .xrow td{height:14px}'
     +'@page landscapePage{size:A4 landscape;margin:8mm}@page portraitPage{size:A4 portrait;margin:8mm}'
     +'@media print{body{background:#fff}.toolbar{display:none}.sheet{margin:0;box-shadow:none;width:auto;min-height:auto}.sheet-a{page:landscapePage}.sheet-b{page:portraitPage}.sheet{page-break-after:always}}'
     +'</style></head><body>'
@@ -6894,7 +6912,7 @@ function _runExport(rds,sp,bcat,title,serie){
     function ec2(nm){var c='#64748b',u=(nm||'').toUpperCase();Object.keys(ECOLS).forEach(function(k){if(u.indexOf(k)>=0)c=ECOLS[k]});return c;}
     var posLbl2=['\ud83e\udd47 1\u00ba Lugar','\ud83e\udd48 2\u00ba Lugar','\ud83e\udd49 3\u00ba Lugar','4\u00ba Lugar','5\u00ba Lugar','6\u00ba Lugar','7\u00ba Lugar','8\u00ba Lugar'];
     var posCol2=['#fbbf24','#94a3b8','#fb923c','#22d3ee','#a78bfa','#f472b6','#64748b','#475569'];
-    _treeRankHtml='<div style="margin-top:24px;border:1px solid rgba(34,211,238,.3);border-radius:10px;overflow:hidden">'
+    _treeRankHtml='<div class="_trk" style="margin-top:24px;border:1px solid rgba(34,211,238,.3);border-radius:10px;overflow:hidden">'
       +'<div style="background:linear-gradient(135deg,rgba(34,211,238,.1),rgba(139,92,246,.06));padding:10px 16px;font-size:14px;font-weight:700;color:#22d3ee">\ud83c\udfc6 Classifica\u00e7\u00e3o Final</div>';
     order.forEach(function(tid,i){
       var nm=tName(tid),pts=pp2(i+1);
@@ -6945,6 +6963,21 @@ function _runExport(rds,sp,bcat,title,serie){
     +'.team.winner b{color:'+T.gn+'}'
     +'.tdot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;flex-shrink:0}'
     +'footer{margin-top:36px;font-size:11px;color:'+T.tx3+';text-align:center}'
+    +'@page{size:A4 portrait;margin:8mm}'
+    +'@media print{'
+    +'body{padding:0!important;min-height:0!important}'
+    +'.wrap{min-height:0!important;align-items:flex-start!important;padding-bottom:0!important}'
+    +'.round{gap:7px!important;padding:0 8px!important}'
+    +'.match{margin-bottom:3px!important;page-break-inside:avoid}'
+    +'.team{padding:6px 12px!important;font-size:13px!important}'
+    +'.team b{font-size:15px!important}'
+    +'.mhora{padding:2px 12px!important;font-size:9px!important}'
+    +'.mlabel{padding:3px 12px!important;font-size:9px!important}'
+    +'.rtitle{margin-bottom:6px!important;padding-bottom:5px!important}'
+    +'h1{font-size:19px!important}.sub{margin-bottom:10px!important}'
+    +'footer{margin-top:12px!important}'
+    +'._trk{page-break-inside:avoid}'
+    +'}'
     +'</style></head><body>'
     +'<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:6px"><img src="data:image/png;base64,'+JOGAR_LOGO+'" style="height:54px;object-fit:contain" alt="JOGAR"><h1 style="margin:0">'+title+'</h1></div>'
     +'<p class="sub">Gerado em '+new Date().toLocaleString('pt-BR')+'</p>'
@@ -8236,6 +8269,66 @@ function getDbPayload(){
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// COLABORAÇÃO EM TEMPO REAL — resultados por confronto (linha por confronto).
+// Cada mesário grava só o(s) confronto(s) que mudou → nunca sobrescreve o jogo
+// de outro. A tabela `resultados` é a fonte de verdade dos placares; o bloco
+// jogos_data guarda a estrutura. Ordem: carrega bloco → aplica resultados por cima.
+// ═══════════════════════════════════════════════════════════════════════════
+function upsertResultados(bracket,genero,matches){
+  if(!S.sb.url||!S.sb.key||!MT.schoolCode||!matches||!matches.length)return;
+  var who=(S.auth&&S.auth.name)||S.role||'';
+  var body=matches.map(function(m){return {
+    escola:MT.schoolCode,bracket:bracket,genero:genero,match_id:m.id,
+    s1:(m.s1==null?null:m.s1),s2:(m.s2==null?null:m.s2),
+    vencedor:m.w||null,is_draw:!!m.isDraw,lancador:who,atualizado_em:new Date().toISOString()
+  };});
+  fetch(S.sb.url+'/rest/v1/resultados?on_conflict=escola,match_id',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key,'Prefer':'resolution=merge-duplicates,return=minimal'},
+    body:JSON.stringify(body)
+  }).catch(function(e){console.error('upsertResultados',e)});
+}
+function applyResultados(rows){
+  if(!rows||!rows.length)return false;
+  var byMatch={};rows.forEach(function(r){byMatch[r.match_id]=r;});
+  var touched={},any=false;
+  Object.keys(S.brk).forEach(function(bk){
+    Object.keys(S.brk[bk]).forEach(function(ct){
+      S.brk[bk][ct].forEach(function(rd){rd.m.forEach(function(m){
+        var r=byMatch[m.id];
+        if(r){
+          var ns1=(r.s1==null?null:r.s1),ns2=(r.s2==null?null:r.s2),nw=r.vencedor||null;
+          if(m.s1!==ns1||m.s2!==ns2||m.w!==nw){
+            m.s1=ns1;m.s2=ns2;m.w=nw;m.isDraw=!!r.is_draw;
+            touched[bk+'||'+ct]=[bk,ct];any=true;
+          }
+        }
+      })});
+    });
+  });
+  Object.keys(touched).forEach(function(k){var kc=touched[k];_reflowBracket(S.brk[kc[0]][kc[1]]);recomputeGroupWinners(kc[0],kc[1]);});
+  return any;
+}
+function loadResultados(cb){
+  if(!S.sb.url||!S.sb.key||!MT.schoolCode){if(cb)cb(false);return;}
+  fetch(S.sb.url+'/rest/v1/resultados?escola=eq.'+encodeURIComponent(MT.schoolCode)+'&select=*',{
+    headers:{'apikey':S.sb.key,'Authorization':'Bearer '+S.sb.key}
+  }).then(function(r){return r.json()}).then(function(rows){
+    var ch=applyResultados(rows||[]);if(cb)cb(ch);
+  }).catch(function(e){console.error('loadResultados',e);if(cb)cb(false);});
+}
+var _resPollTimer=null;
+function startResultadosPoll(){
+  if(_resPollTimer||!MT.schoolCode||MT.isMaster)return;
+  _resPollTimer=setInterval(function(){
+    if(document.hidden)return;
+    loadResultados(function(changed){
+      if(changed&&!S.mod&&!document.querySelector('input:focus, textarea:focus')){R();}
+    });
+  },5000);
+}
+
 function syncToSupabase(manual){
   if(!S.sb.url||!S.sb.key){
     if(manual)alert('Configure a URL e a chave do Supabase primeiro (⚙️ Configurações).');
@@ -8588,6 +8681,10 @@ if(S.sb.url&&S.sb.key&&!MT.isMaster){
         });
       }catch(e){console.warn('recomputeGroupWinners on load:',e)}
     }
+    // Real-time collaboration: apply per-confronto results ON TOP of the loaded
+    // structure (the `resultados` table is authoritative for placares), then start
+    // live polling so other mesários' entries appear automatically.
+    loadResultados(function(){startResultadosPoll();R();});
     if(ok){R()}else{R()} // Render either way after load attempt
     // Check if school is active
     if(MT.schoolCode){
