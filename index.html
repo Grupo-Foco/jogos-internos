@@ -2794,7 +2794,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r11'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r12'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -4539,7 +4539,7 @@ function exportRankingResumido(crData,rkData){
     +'body{font-family:-apple-system,system-ui,Arial,sans-serif;background:'+T.bg+';color:'+T.tx+';padding:32px;min-height:100vh}'
     +'.cont{max-width:760px;margin:0 auto}'
     +'h1{font-size:30px;font-weight:800;color:'+T.accent+';letter-spacing:-.5px;margin-bottom:6px;display:flex;align-items:center;gap:10px}'
-    +'.sub{font-size:13px;color:'+T.tx3+';margin-bottom:28px}'
+    +'.sub{font-size:13px;color:'+T.tx3+';margin-bottom:28px;text-align:center}'
     +'table{width:100%;border-collapse:collapse;background:'+T.card+';border:1px solid '+T.borderStrong+';border-radius:14px;overflow:hidden}'
     +'thead th{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:'+T.tx2+';padding:14px 16px;border-bottom:2px solid '+T.border+';text-align:left;background:'+T.headerBg+'}'
     +'thead th.pts{text-align:right;color:'+T.accent+'}'
@@ -5597,6 +5597,7 @@ function mRes(c){
     ),
     h('div',{'class':'md-f'},
       h('button',{'class':'btn',onclick:close},'Cancelar'),
+      h('button',{'class':'btn',onclick:function(){exportSumula(S.mod.si,S.mod.ct,m.id);}},'🖨️ Súmula'),
       isEdit?h('button',{'class':'btn btn-r btn-s',onclick:function(){
         // Clear this result, then reflow so any team that had "descended" from it
         // is undone (downstream slots return to 'A definir' and their results clear).
@@ -6612,7 +6613,7 @@ function mEnr(c){
 
 // ── EXPORT: Chaveamento como HTML para divulgação ───────────────────────────
 
-function exportSumula(bkey,ct){
+function exportSumula(bkey,ct,focusMid){
   var rds=S.brk[bkey]&&S.brk[bkey][ct]?S.brk[bkey][ct]:[];
   if(!rds.length){alert('Nenhum confronto encontrado para gerar a súmula.');return;}
   var parts=bkey.split('__');var spId=parts[1]||parts[0];var serie=parts.slice(2).join('__')||'';
@@ -6645,7 +6646,8 @@ function exportSumula(bkey,ct){
   }
   var games=[];
   rds.forEach(function(rd){rd.m.forEach(function(m,idx){
-    games.push({n:jogoNum[m.id],fase:faseTag(rd),is3rd:m.is3rd,hora:m._hora||'',local:m.lc||'',t1:team(m,'t1'),t2:team(m,'t2')});
+    if(focusMid&&m.id!==focusMid)return;
+    games.push({n:jogoNum[m.id],fase:faseTag(rd),is3rd:m.is3rd,hora:m._hora||'',local:m.lc||'',t1:team(m,'t1'),t2:team(m,'t2'),s1:m.s1,s2:m.s2,played:(m.s1!=null&&m.s2!=null)});
   })});
   var isFmtA=/VÔLEI DE AREIA|VOLEIBOL|FUTV[ÔO]LEI/.test(sportName);
   var logoImg='<img class="logo" src="data:image/png;base64,'+JOGAR_LOGO+'" alt="JOGAR">';
@@ -6654,26 +6656,26 @@ function exportSumula(bkey,ct){
     // Format A: one landscape sheet per game (sets)
     var setDefs=/AREIA/.test(sportName)?[['1º SET',15],['2º SET',15],['3º SET',10]]:[['1º SET',25],['2º SET',25],['3º SET',25],['4º SET',25],['5º SET',15]];
     games.forEach(function(g){
-      function grid(np,nm){var c='';for(var i=1;i<=np;i++)c+='<td>'+i+'</td>';return '<tr><th class="tname">'+nm+'</th>'+c+'</tr>';}
+      function grid(np,nm,sc){var c='';for(var i=1;i<=np;i++)c+='<td'+((sc!=null&&i<=sc)?' class="mk"':'')+'>'+i+'</td>';return '<tr><th class="tname">'+nm+'</th>'+c+'</tr>';}
       var sets='';
-      setDefs.forEach(function(sd){sets+='<div class="setlbl">'+sd[0]+'</div><table class="ptgrid"><tbody>'+grid(sd[1],g.t1)+grid(sd[1],g.t2)+'</tbody></table>';});
+      setDefs.forEach(function(sd,si){var m1=(g.played&&si===0)?g.s1:null,m2=(g.played&&si===0)?g.s2:null;sets+='<div class="setlbl">'+sd[0]+'</div><table class="ptgrid"><tbody>'+grid(sd[1],g.t1,m1)+grid(sd[1],g.t2,m2)+'</tbody></table>';});
       body+='<div class="sheet sheet-a"><div class="hdr">'+logoImg+'<div class="title">SÚMULA '+sportName+'</div></div>'
         +'<div class="fields"><div><b>DATA:</b> <span class="fill"></span></div>'
         +'<div><b>HORÁRIO:</b> <span class="fillv">'+g.hora+'</span> &nbsp; <b>NAIPE:</b> <span class="fillv">'+ct+'</span> &nbsp; <span class="muted">('+serieLabel+(g.fase?' · '+g.fase:'')+(g.local?' · '+g.local:'')+')</span></div>'
         +'<div><b>EQUIPES:</b> <span class="fillv">'+g.t1+'</span> &nbsp;X&nbsp; <span class="fillv">'+g.t2+'</span></div></div>'
         +sets
-        +'<div class="rflabel">RESULTADO FINAL:</div><table class="rfinal"><tbody><tr><th>'+g.t1+'</th><td></td></tr><tr><th>'+g.t2+'</th><td></td></tr></tbody></table></div>';
+        +'<div class="rflabel">RESULTADO FINAL:</div><table class="rfinal"><tbody><tr><th>'+g.t1+'</th><td>'+(g.played?g.s1:'')+'</td></tr><tr><th>'+g.t2+'</th><td>'+(g.played?g.s2:'')+'</td></tr></tbody></table></div>';
     });
   } else {
     // Format B: one consolidated portrait sheet with all games (running score grid 1-21)
     var blocks='';
     games.forEach(function(g){
-      function prow(nm){var c='';for(var i=1;i<=21;i++)c+='<td>'+i+'</td>';return '<tr><th class="bteam">'+nm+'</th>'+c+'</tr>';}
+      function prow(nm,sc){var c='';for(var i=1;i<=21;i++)c+='<td'+((sc!=null&&i<=sc)?' class="mk"':'')+'>'+i+'</td>';return '<tr><th class="bteam">'+nm+'</th>'+c+'</tr>';}
       blocks+='<div class="gblock"><div class="ghead">JOGO '+(g.n<10?'0':'')+g.n+(g.fase?' <span class="tag">'+g.fase+'</span>':'')+'</div>'
         +'<div class="gmeta"><span><b>Data:</b> ______</span><span><b>Horário:</b> '+g.hora+'</span><span><b>Gênero:</b> '+ct+'</span></div>'
-        +'<table class="bptgrid"><tbody>'+prow(g.t1)
+        +'<table class="bptgrid"><tbody>'+prow(g.t1,g.played?g.s1:null)
         +'<tr class="xrow"><th></th><td colspan="10"></td><td class="xcell">x</td><td colspan="10"></td></tr>'
-        +prow(g.t2)+'</tbody></table></div>';
+        +prow(g.t2,g.played?g.s2:null)+'</tbody></table></div>';
     });
     body='<div class="sheet sheet-b"><div class="hdr hdr-b">'+logoImg+'<div class="title">SÚMULA '+sportName+'</div><div class="subttl">'+serieLabel+' · '+ct+(games[0]&&games[0].local?' · '+games[0].local:'')+'</div></div>'+blocks+'</div>';
   }
@@ -6692,6 +6694,7 @@ function exportSumula(bkey,ct){
     +'.rflabel{text-align:center;font-weight:800;margin:12px 0 5px;font-size:15px}.rfinal{width:70%;margin:0 auto}.rfinal th{border:1px solid #000;background:#f3f4f6;text-align:left;padding:5px 10px;font-size:13px;width:45%}.rfinal td{border:1px solid #000;height:26px}'
     +'.gblock{border:1px solid #000;margin-bottom:6px}.ghead{background:#eef2f7;font-weight:800;text-align:center;font-size:13px;padding:3px;border-bottom:1px solid #000}.tag{color:#b45309;font-size:11px}'
     +'.gmeta{display:flex;justify-content:space-between;font-size:12px;padding:4px 8px;border-bottom:1px solid #000}'
+    +'td.mk{background:#22c55e;color:#04210f;font-weight:800}'
     +'.bptgrid td,.bptgrid th{border:1px solid #000;text-align:center;font-size:11px;height:22px;width:4%}.bptgrid .bteam{width:16%;text-align:left;padding-left:6px;font-weight:700;font-size:11px;background:#f7f8fa}.xrow td{border:1px solid #000;height:22px}.xcell{font-weight:800}'
     +'@page landscapePage{size:A4 landscape;margin:8mm}@page portraitPage{size:A4 portrait;margin:8mm}'
     +'@media print{body{background:#fff}.toolbar{display:none}.sheet{margin:0;box-shadow:none;width:auto;min-height:auto}.sheet-a{page:landscapePage}.sheet-b{page:portraitPage}.sheet{page-break-after:always}}'
@@ -6911,7 +6914,7 @@ function _runExport(rds,sp,bcat,title,serie){
     +'*{margin:0;padding:0;box-sizing:border-box}'
     +'body{font-family:-apple-system,system-ui,Arial,sans-serif;background:'+T.bg+';color:'+T.tx+';padding:24px 32px;min-height:100vh}'
     +'h1{font-size:26px;font-weight:800;margin-bottom:4px;color:'+T.accent+';letter-spacing:-.3px}'
-    +'.sub{font-size:13px;color:'+T.tx3+';margin-bottom:28px}'
+    +'.sub{font-size:13px;color:'+T.tx3+';margin-bottom:28px;text-align:center}'
     +'/* MATCH LIST */table{width:100%;border-collapse:collapse}'
     +'th{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:'+T.tx2+';padding:8px 12px;border-bottom:2px solid '+T.border+';text-align:left}'
     +'td{padding:12px;border-bottom:1px solid '+T.border+';vertical-align:middle;color:'+T.tx+'}'
@@ -6924,7 +6927,7 @@ function _runExport(rds,sp,bcat,title,serie){
     +'.res{font-size:17px;font-weight:800;color:'+T.gn+'}'
     +'tr:hover{background:'+(S.theme==='light'?'rgba(0,0,0,.02)':'rgba(255,255,255,.03)')+'}'
     +'/* BRACKET TREE */'
-    +'.wrap{display:flex;gap:0;align-items:flex-start;overflow-x:auto;padding-bottom:20px;width:100%}'
+    +'.wrap{display:flex;gap:0;align-items:center;overflow-x:auto;padding-bottom:20px;width:100%;min-height:60vh}'
     +'.round{display:flex;flex-direction:column;justify-content:center;gap:20px;flex:1;min-width:200px;padding:0 12px}'
     +'.rtitle{text-align:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:'+T.tx3+';margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid '+T.border+'}'
     +'.match{background:'+T.card+';border:1px solid '+T.borderStrong+';border-radius:12px;overflow:hidden;margin-bottom:4px}'
@@ -6943,7 +6946,7 @@ function _runExport(rds,sp,bcat,title,serie){
     +'.tdot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;flex-shrink:0}'
     +'footer{margin-top:36px;font-size:11px;color:'+T.tx3+';text-align:center}'
     +'</style></head><body>'
-    +'<div style="display:flex;align-items:center;gap:14px;margin-bottom:6px"><img src="data:image/png;base64,'+JOGAR_LOGO+'" style="height:54px;object-fit:contain" alt="JOGAR"><h1 style="margin:0">'+title+'</h1></div>'
+    +'<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:6px"><img src="data:image/png;base64,'+JOGAR_LOGO+'" style="height:54px;object-fit:contain" alt="JOGAR"><h1 style="margin:0">'+title+'</h1></div>'
     +'<p class="sub">Gerado em '+new Date().toLocaleString('pt-BR')+'</p>'
     +(isMatchList?matchListHtml:'<div class="wrap">'+rounds+'</div>'+_treeRankHtml)
     +'<footer>'+S.ev.name+'</footer>'
