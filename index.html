@@ -2797,7 +2797,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r20'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r21'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -6683,7 +6683,7 @@ function exportSumula(bkey,ct,focusMid){
     var nG=games.length;
     var rowH=24,xH=14;
     if(nG<=9){
-      var perBlock=Math.floor((925-52)/nG);   // ~header 60px, rest split per game
+      var perBlock=Math.floor((955-40)/nG);   // ~header 60px, rest split per game
       var gridH=perBlock-38;                     // ghead+gmeta ≈ 38px
       rowH=Math.max(20,Math.floor((gridH-14)/2));// two team rows + a 14px x-row
     }
@@ -6696,7 +6696,7 @@ function exportSumula(bkey,ct,focusMid){
         +'<tr class="xrow"><th style="height:'+xH+'px"></th><td colspan="10"></td><td class="xcell">x</td><td colspan="10"></td></tr>'
         +prow(g.t2,g.played?g.s2:null)+'</tbody></table></div>';
     });
-    body='<div class="sheet sheet-b"><div class="hdr hdr-b">'+logoImg+'<div class="title">SÚMULA '+sportName+'</div><div class="subttl">'+serieLabel+' · '+ct+(games[0]&&games[0].local?' · '+games[0].local:'')+'</div></div>'+blocks+'</div>';
+    var logo2='<img class="logo2" src="data:image/png;base64,'+JOGAR_LOGO+'" alt="JOGAR">';body='<div class="sheet sheet-b"><div class="hdr hdr-b">'+logo2+'<div class="hdr-center"><div class="title">SÚMULA '+sportName+'</div><div class="subttl">'+serieLabel+' · '+ct+(games[0]&&games[0].local?' · '+games[0].local:'')+'</div></div>'+logo2+'</div>'+blocks+'</div>';
   }
   var html='<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Súmula — '+sportName+' '+ct+' '+serieLabel+'</title><style>'
     +'*{box-sizing:border-box}body{margin:0;background:#eceff3;font-family:Arial,Helvetica,sans-serif;color:#111;-webkit-print-color-adjust:exact;print-color-adjust:exact}'
@@ -6704,7 +6704,10 @@ function exportSumula(bkey,ct,focusMid){
     +'.btn{background:#22c55e;color:#04210f;border:0;border-radius:8px;padding:9px 16px;font-weight:800;cursor:pointer;font-size:14px}'
     +'.sheet{background:#fff;margin:18px auto;box-shadow:0 2px 12px rgba(0,0,0,.15)}'
     +'.sheet-a{width:297mm;min-height:210mm;padding:12mm}.sheet-b{width:210mm;min-height:297mm;padding:7mm}'
-    +'.hdr{text-align:center;margin-bottom:8px}.logo{height:70px;object-fit:contain}.logo.hdr-b,.hdr-b .logo{height:60px}'
+    +'.hdr{text-align:center;margin-bottom:8px}.logo{height:70px;object-fit:contain}'
+    +'.hdr-b{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px}'
+    +'.logo2{height:46px;object-fit:contain;flex:0 0 auto}.hdr-center{flex:1;text-align:center}'
+    +'.hdr-b .title{font-size:18px;margin-top:0}.hdr-b .subttl{font-size:11px}'
     +'.title{font-weight:800;text-decoration:underline;font-size:20px;margin-top:2px}.subttl{font-size:12px;color:#333}'
     +'.fields{font-size:14px;line-height:1.9;margin:6px 0 10px;text-align:center}.fields .fill{display:inline-block;border-bottom:1px solid #000;width:200px}'
     +'.fields .fillv{display:inline-block;border-bottom:1px solid #000;min-width:120px;font-weight:700;padding:0 4px}.muted{color:#666;font-size:12px}'
