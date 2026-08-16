@@ -2803,7 +2803,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r23'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r24'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -4577,6 +4577,7 @@ function exportRankingResumido(crData,rkData){
     +'footer{color:#94a3b8}}'
     +'</style></head><body>'
     +'<div class="cont">'
+    +'<div style="text-align:center;margin-bottom:6px"><img src="data:image/png;base64,'+JOGAR_LOGO+'" style="height:64px;object-fit:contain" alt="JOGAR"></div>'
     +'<h1>🏆 Ranking — '+S.ev.name+'</h1>'
     +'<p class="sub">'+subtitle+'</p>'
     +'<table><thead><tr>'
@@ -4637,6 +4638,7 @@ function exportRankingDetail(crData){
     +'.rules{border-color:#e2e8f0;color:#4a5568}.rules b{color:#1a1f2e}'
     +'h1{color:#0891b2}footer{color:#94a3b8}}'
     +'</style></head><body>'
+    +'<div style="text-align:center;margin-bottom:6px"><img src="data:image/png;base64,'+JOGAR_LOGO+'" style="height:64px;object-fit:contain" alt="JOGAR"></div>'
     +'<h1>📊 Ranking Detalhado — '+S.ev.name+'</h1>'
     +'<p class="sub">Gerado em '+new Date().toLocaleString('pt-BR')+' · '+(S.bay||'Todas as séries')+'</p>'
     +rows
@@ -7087,6 +7089,7 @@ function exportAgenda(ano){
     +'.pnd{background:rgba(100,116,139,.15);color:'+T.tx3+'}'
     +'footer{margin-top:32px;font-size:11px;color:'+T.tx3+';text-align:center}'
     +'</style></head><body>'
+    +'<div style="text-align:center;margin-bottom:6px"><img src="data:image/png;base64,'+JOGAR_LOGO+'" style="height:60px;object-fit:contain" alt="JOGAR"></div>'
     +'<h1>'+title+'</h1>'
     +'<p class="sub2">Gerado em '+new Date().toLocaleString('pt-BR')+'</p>'
     +(filtered.length
