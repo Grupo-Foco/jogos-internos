@@ -2803,7 +2803,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r24'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r25'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -3249,6 +3249,13 @@ function pB(c){
     anos.forEach(function(a){ytabs.appendChild(h('button',{'class':'tab'+(S.bay===a?' active':''),onclick:(function(y){return function(){S.bay=y;S.bs='';S.bserie='';S.bc='';R()}})(a)},a))});
     c.appendChild(ytabs);
   }
+
+  // Global "export all brackets" toolbar (for mural divulgation)
+  var expAllBar=h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginBottom:'12px',alignItems:'center',padding:'8px 10px',background:'var(--bg3)',borderRadius:'10px',border:'1px solid var(--br)'}});
+  expAllBar.appendChild(h('span',{style:{fontSize:'11px',color:'var(--tx2)',marginRight:'2px',fontWeight:'600'}},'📄 Todos os chaveamentos (mural):'));
+  expAllBar.appendChild(h('button',{'class':'btn btn-s',onclick:function(){exportAllBrackets('light')}},'☀️ Versão Clara'));
+  expAllBar.appendChild(h('button',{'class':'btn btn-s',onclick:function(){exportAllBrackets('dark')}},'🌙 Versão Escura'));
+  c.appendChild(expAllBar);
 
   // Build metadata from brk (imported) + enrollments (normal)
   var brkAllKeys=Object.keys(S.brk).filter(function(bk){
@@ -4483,8 +4490,9 @@ function calcClassDetail(classId){
 // throughout exportRankingResumido / exportRankingDetail / exportBracketByKey
 // / exportAgenda / exportLogins. Each export uses the same names so any
 // future export can opt-in by reading from the same object.
-function _exportTheme(){
-  if(S.theme==='light'){
+function _exportTheme(themeOverride){
+  var th=themeOverride||S.theme;
+  if(th==='light'){
     return {
       bg:'#f8fafc',         // page background
       card:'#ffffff',       // card / table background
@@ -6757,7 +6765,7 @@ function exportBracketByKey(bkey,bcat){
   var title=S.ev.name+' — '+(sp?sp.nm:'')+' '+bcat+serieLabel;
   _runExport(rds,sp,bcat,title,serie);
 }
-function _runExport(rds,sp,bcat,title,serie){
+function _runExport(rds,sp,bcat,title,serie,opts){
   // Detect rodízio/groups: match list mode if any classify round has 3+ matches or label contains Grupo/Rodizio
   var hasGroupsExp=rds.some(function(rd){return rd.label&&(rd.label.indexOf('Grupo')>=0||rd.label==='Rodizio')});
   var hasSemiExp=rds.some(function(rd){return rd.label==='Semifinal'});
@@ -6953,12 +6961,8 @@ function _runExport(rds,sp,bcat,title,serie){
     });
     _treeRankHtml+='</div>';
   })();
-  var T=_exportTheme();
-  var out='<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">'
-    +'<meta name="viewport" content="width=device-width,initial-scale=1">'
-    +'<title>'+title+'</title>'
-    +'<style>'
-    +'*{margin:0;padding:0;box-sizing:border-box}'
+  var T=_exportTheme(opts&&opts.theme);
+  var cssStr='*{margin:0;padding:0;box-sizing:border-box}'
     +'body{font-family:-apple-system,system-ui,Arial,sans-serif;background:'+T.bg+';color:'+T.tx+';padding:24px 32px;min-height:100vh}'
     +'h1{font-size:26px;font-weight:800;margin-bottom:4px;color:'+T.accent+';letter-spacing:-.3px}'
     +'.sub{font-size:13px;color:'+T.tx3+';margin-bottom:28px;text-align:center}'
@@ -7007,16 +7011,58 @@ function _runExport(rds,sp,bcat,title,serie){
     +'footer{margin-top:12px!important}'
     +'._trk{page-break-inside:avoid}'
     +'}'
-    +'</style></head><body>'
-    +'<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:6px"><img src="data:image/png;base64,'+JOGAR_LOGO+'" style="height:54px;object-fit:contain" alt="JOGAR"><h1 style="margin:0">'+title+'</h1></div>'
+    ;
+  var bodyStr='<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:6px"><img src="data:image/png;base64,'+JOGAR_LOGO+'" style="height:54px;object-fit:contain" alt="JOGAR"><h1 style="margin:0">'+title+'</h1></div>'
     +'<p class="sub">Gerado em '+new Date().toLocaleString('pt-BR')+'</p>'
     +(isMatchList?matchListHtml:'<div class="wrap">'+rounds+'</div>'+_treeRankHtml)
-    +'<footer>'+S.ev.name+'</footer>'
-    +'</body></html>';
+    +'<footer>'+S.ev.name+'</footer>';
+  if(opts&&opts.returnContent)return {css:cssStr,body:bodyStr,T:T};
+  var out='<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+title+'</title><style>'+cssStr+'</style></head><body>'+bodyStr+'</body></html>';
   var blob=new Blob([out],{type:'text/html;charset=utf-8'});
   var a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
   a.download='chaveamento_'+(sp?sp.nm.replace(/\s+/g,'_'):'esporte')+'_'+bcat.replace(/\s+/g,'_')+(serie&&serie!=='GERAL'?'_'+serie.replace(/\s+/g,'_'):'')+'.html';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);
+}
+function exportAllBrackets(themeName){
+  var keys=Object.keys(S.brk||{});
+  if(!keys.length){alert('Nenhum chaveamento para exportar.');return;}
+  var T=_exportTheme(themeName);
+  var css=null, pages='', count=0;
+  // order by sport name then category/serie for a tidy mural sequence
+  var items=[];
+  keys.forEach(function(bkey){
+    var cats=S.brk[bkey]||{};
+    Object.keys(cats).forEach(function(bcat){
+      var rds=cats[bcat]; if(!rds||!rds.length)return;
+      var parts=bkey.split('__'); var spId=parts[1]||parts[0]; var serie=parts.slice(2).join('__')||'';
+      var sp=S.spt.find(function(s){return s.id===spId});
+      items.push({bkey:bkey,bcat:bcat,rds:rds,sp:sp,serie:serie,spnm:(sp?sp.nm:'zzz')});
+    });
+  });
+  items.sort(function(a,b){return (a.serie||'').localeCompare(b.serie||'')||a.spnm.localeCompare(b.spnm)||a.bcat.localeCompare(b.bcat);});
+  items.forEach(function(it){
+    var serieLabel=it.serie&&it.serie!=='GERAL'?' - '+it.serie:'';
+    var title=(it.sp?it.sp.nm:'')+' '+it.bcat+serieLabel;
+    var r=_runExport(it.rds,it.sp,it.bcat,title,it.serie,{returnContent:true,theme:themeName});
+    if(!r)return;
+    if(!css)css=r.css;
+    pages+='<div class="bpage">'+r.body+'<div class="credit">Sistema Produzido por Rodolfo C Pinheiro</div></div>';
+    count++;
+  });
+  if(!count){alert('Nenhum chaveamento com confrontos para exportar.');return;}
+  var fullCss=css
+    +'.bpage{page-break-after:always;min-height:100vh;padding-bottom:8px}'
+    +'.bpage:last-child{page-break-after:auto}'
+    +'.credit{margin-top:6px;font-size:10px;color:'+T.tx3+';text-align:center;font-style:italic}'
+    +'@media print{.bpage{page-break-after:always!important;min-height:0!important}.bpage:last-child{page-break-after:auto!important}}';
+  var out='<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">'
+    +'<meta name="viewport" content="width=device-width,initial-scale=1">'
+    +'<title>Todos os Chaveamentos — '+S.ev.name+'</title>'
+    +'<style>'+fullCss+'</style></head><body>'+pages+'</body></html>';
+  var blob=new Blob([out],{type:'text/html;charset=utf-8'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='todos_chaveamentos_'+(themeName==='light'?'claro':'escuro')+'_'+new Date().toISOString().slice(0,10)+'.html';
   document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);
 }
 function exportBracket(ano,bsid,bcat){
