@@ -2553,6 +2553,28 @@ function computeBracketRanking(rs){
   return ordered.map(function(t){return woInBracket[t]?null:t;});
 }
 
+function _awardBracketPositions(rs,cb){
+  // Shared position-awarding logic used by BOTH calcRk (totals) and calcClassDetail
+  // (breakdown) so the itemized points always sum to the total. Uses
+  // computeBracketRanking (resolves W_/L_ slot refs) and awards only when complete.
+  if(!rs||!rs.length)return;
+  function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
+  var r0=rs[0]||{m:[]},cnt={};
+  r0.m.forEach(function(m){[m.t1,m.t2].forEach(function(t){if(isReal(t))cnt[t]=(cnt[t]||0)+1})});
+  var isRod=Object.keys(cnt).some(function(t){return cnt[t]>=2})&&r0.m.length>=3;
+  var complete;
+  if(isRod){
+    complete=r0.m.every(function(m){var p1=!isReal(m.t1),p2=!isReal(m.t2);return (p1&&p2)||(m.s1!=null&&m.s2!=null);});
+  } else {
+    var lastFR=rs[rs.length-1];var fm=lastFR.m.find(function(m){return!m.is3rd});
+    complete=!!(fm&&fm.w&&isReal(fm.w));
+  }
+  if(!complete)return;
+  computeBracketRanking(rs).forEach(function(tid,i){
+    if(!isReal(tid))return;
+    cb(tid,i+1);
+  });
+}
 function calcRk(){
   var sc=S.scoring||{p1:10,p2:8,p3:6,p4:4,pWin:3,pWO:-2};
   var pts={};
@@ -2596,24 +2618,10 @@ function calcRk(){
   // don't get points merely for appearing in the bracket.
   function _posPts(rank){if(sc.positions&&sc.positions[rank-1])return sc.positions[rank-1].pts||0;return sc['p'+rank]||0;}
   Object.entries(S.brk).forEach(function(e1){
-    Object.entries(e1[1]).forEach(function(e2){
-      var rs=e2[1];if(!rs||!rs.length)return;
-      function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
-      var r0=rs[0]||{m:[]},cnt={};
-      r0.m.forEach(function(m){[m.t1,m.t2].forEach(function(t){if(isReal(t))cnt[t]=(cnt[t]||0)+1})});
-      var isRod=Object.keys(cnt).some(function(t){return cnt[t]>=2})&&r0.m.length>=3;
-      var complete;
-      if(isRod){
-        complete=r0.m.every(function(m){var p1=!isReal(m.t1),p2=!isReal(m.t2);return (p1&&p2)||(m.s1!=null&&m.s2!=null);});
-      } else {
-        var lastFR=rs[rs.length-1];var fm=lastFR.m.find(function(m){return!m.is3rd});
-        complete=!!(fm&&fm.w&&isReal(fm.w));
-      }
-      if(!complete)return;
-      computeBracketRanking(rs).forEach(function(tid,i){
-        if(!isReal(tid))return;
+    Object.values(e1[1]).forEach(function(rs){
+      _awardBracketPositions(rs,function(tid,rank){
         if(!pts[tid])pts[tid]={w:0,d:0,l:0,p:0,wo:0,draws:0};
-        pts[tid].p+=_posPts(i+1);
+        pts[tid].p+=_posPts(rank);
       });
     });
   });
@@ -2803,7 +2811,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r25'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r26'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -4377,8 +4385,10 @@ function calcClassDetail(classId){
         var key=spName+' '+ct;
         var pWinV=(sc.pWin!=null?sc.pWin:3);
         var winPts=wins*pWinV;
-        lines.push({desc:'⚽ <b>'+key+'</b> — '+wins+' vitória(s) × '+pWinV+' pts',pts:winPts});
         totalWins+=wins;
+        // Only itemize wins when they actually score points (this school: wins=0 pts,
+        // only placement scores — so these rows are omitted to avoid clutter).
+        if(winPts!==0)lines.push({desc:'⚽ <b>'+key+'</b> — '+wins+' vitória(s) × '+pWinV+' pts',pts:winPts});
       }
       if(draws>0){
         var pDrawV=(sc.pDraw!=null?sc.pDraw:1);
@@ -4396,67 +4406,18 @@ function calcClassDetail(classId){
         lines.push({desc:'🔴 <b>'+spName+' '+ct+'</b> — '+wos+' W.O.',pts:wos*(sc.pWO||0)});
         totalWO+=wos;
       }
-      // Position points (1st/2nd/3rd/4th from finals OR rodizio standings)
-      if(rs.length){
-        // RODIZIO mode: pure 1-round bracket with 3+ matches (relaxed threshold)
-        var totalRnds=rs.length;
-        var isRodizio=totalRnds===1&&rs[0]&&rs[0].m&&rs[0].m.length>=3;
-        if(isRodizio){
-          // Only count position points when ALL rodizio matches are complete.
-          var allDoneRod=rs[0].m.every(function(m){
-            var isPH1=!m.t1||m.t1.indexOf('PH_')===0||m.t1.indexOf('W_')===0||m.t1.indexOf('L_')===0||m.t1.indexOf('GW_')===0;
-            var isPH2=!m.t2||m.t2.indexOf('PH_')===0||m.t2.indexOf('W_')===0||m.t2.indexOf('L_')===0||m.t2.indexOf('GW_')===0;
-            return (isPH1&&isPH2)||(m.s1!=null&&m.s2!=null);
-          });
-          if(allDoneRod){
-            var sortedRod=_rodizioStandings(rs[0]);
-            var posLbl=['1º Lugar','2º Lugar','3º Lugar','4º Lugar','5º Lugar','6º Lugar','7º Lugar','8º Lugar'];
-            sortedRod.forEach(function(st,pi){
-              var tid=st.t;
-              // Check if this is our class
-              var te=S.enr.find(function(e){return e.id===tid});
-              var isOurClass=te?te.ci===classId:tid===classId;
-              if(isOurClass){
-                var pts=pospts(pi+1);
-                if(pts)lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+posLbl[pi]+' (rodízio)',pts:pts});
-              }
-            });
-          }
-        }
-        var finalRound=rs[rs.length-1];
-        if(!isRodizio&&finalRound&&finalRound.m){
-          var finalM=finalRound.m.find(function(m){return!m.is3rd});
-          var thirdM=finalRound.m.find(function(m){return m.is3rd});
-          if(finalM&&finalM.w){
-            var checkPos=function(teamId,pos,label){
-              if(!teamId||teamId==='BYE'||teamId.indexOf('W_')===0||teamId.indexOf('L_')===0||teamId.indexOf('PH_')===0||teamId.indexOf('GW_')===0)return;
-              var te=S.enr.find(function(e){return e.id===teamId});
-              var isOurClass=te?te.ci===classId:teamId===classId;
-              if(isOurClass){
-                var pts=pospts(pos);
-                if(pts)lines.push({desc:'🏆 <b>'+spName+' '+ct+'</b> — '+label,pts:pts});
-              }
-            };
-            checkPos(finalM.w,1,'1º Lugar');
-            var second=finalM.w===finalM.t1?finalM.t2:finalM.t1;
-            checkPos(second,2,'2º Lugar');
-          }
-          if(thirdM&&thirdM.w){
-            var checkPos3=function(teamId,pos,label){
-              if(!teamId||teamId==='BYE'||teamId.indexOf('W_')===0||teamId.indexOf('L_')===0||teamId.indexOf('PH_')===0)return;
-              var te=S.enr.find(function(e){return e.id===teamId});
-              var isOurClass=te?te.ci===classId:teamId===classId;
-              if(isOurClass){
-                var pts=pospts(pos);
-                if(pts)lines.push({desc:'🥉 <b>'+spName+' '+ct+'</b> — '+label,pts:pts});
-              }
-            };
-            checkPos3(thirdM.w,3,'3º Lugar');
-            var fourth=thirdM.w===thirdM.t1?thirdM.t2:thirdM.t1;
-            checkPos3(fourth,4,'4º Lugar');
-          }
-        }
-      }
+      // Position points — unified with calcRk via _awardBracketPositions so the
+      // itemized breakdown always sums to the total (resolves W_/L_ finalists).
+      var _posLbls=['','1º Lugar','2º Lugar','3º Lugar','4º Lugar','5º Lugar','6º Lugar','7º Lugar','8º Lugar'];
+      _awardBracketPositions(rs,function(tid,rank){
+        var te=S.enr.find(function(e){return e.id===tid});
+        var isOurClass=te?te.ci===classId:tid===classId;
+        if(!isOurClass)return;
+        var pv=pospts(rank);
+        if(!pv)return;
+        var ico=rank<=2?'🏆':(rank<=4?'🥉':'🎖️');
+        lines.push({desc:ico+' <b>'+spName+' '+ct+'</b> — '+(_posLbls[rank]||rank+'º Lugar'),pts:pv});
+      });
     });
   });
 
@@ -7024,6 +6985,10 @@ function _runExport(rds,sp,bcat,title,serie,opts){
   a.download='chaveamento_'+(sp?sp.nm.replace(/\s+/g,'_'):'esporte')+'_'+bcat.replace(/\s+/g,'_')+(serie&&serie!=='GERAL'?'_'+serie.replace(/\s+/g,'_'):'')+'.html';
   document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);
 }
+function _bracketHasResults(rds){
+  // "filled" = at least one match with a recorded result (score or winner or W.O.)
+  return (rds||[]).some(function(r){return (r.m||[]).some(function(m){return (m.s1!=null&&m.s2!=null)||m.w||m.wo;});});
+}
 function exportAllBrackets(themeName){
   var keys=Object.keys(S.brk||{});
   if(!keys.length){alert('Nenhum chaveamento para exportar.');return;}
@@ -7035,6 +7000,7 @@ function exportAllBrackets(themeName){
     var cats=S.brk[bkey]||{};
     Object.keys(cats).forEach(function(bcat){
       var rds=cats[bcat]; if(!rds||!rds.length)return;
+      if(!_bracketHasResults(rds))return; // only export brackets already filled in
       var parts=bkey.split('__'); var spId=parts[1]||parts[0]; var serie=parts.slice(2).join('__')||'';
       var sp=S.spt.find(function(s){return s.id===spId});
       items.push({bkey:bkey,bcat:bcat,rds:rds,sp:sp,serie:serie,spnm:(sp?sp.nm:'zzz')});
@@ -7050,7 +7016,7 @@ function exportAllBrackets(themeName){
     pages+='<div class="bpage">'+r.body+'<div class="credit">Sistema Produzido por Rodolfo C Pinheiro</div></div>';
     count++;
   });
-  if(!count){alert('Nenhum chaveamento com confrontos para exportar.');return;}
+  if(!count){alert('Nenhum chaveamento preenchido ainda.\n\nSão exportados apenas os chaveamentos que já têm algum resultado lançado.');return;}
   var fullCss=css
     +'.bpage{page-break-after:always;min-height:100vh;padding-bottom:8px}'
     +'.bpage:last-child{page-break-after:auto}'
