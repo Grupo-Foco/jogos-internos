@@ -2811,7 +2811,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r26'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.07·r27'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -8436,10 +8436,11 @@ function loadFromSupabase(onDone){
       'apikey':S.sb.key,
       'Authorization':'Bearer '+S.sb.key
     }
-  }).then(function(res){return res.json()})
+  }).then(function(res){if(!res.ok)throw new Error('HTTP '+res.status);return res.json()})
   .then(function(rows){
     S.sb.syncing=false;
-    if(rows&&rows.length&&rows[0].data){
+    if(!Array.isArray(rows))throw new Error('resposta inesperada do servidor');
+    if(rows.length&&rows[0].data){
       var d=JSON.parse(rows[0].data);
       ['cls','spt','enr','brk','locs','ev','logins','judgeLogins','adminLogins','auditLog','recursos','adminPass','thirdPlace','appInfo','scoring','podiums','woLog'].forEach(function(k){
         if(d[k]!==undefined)S[k]=d[k];
@@ -8682,9 +8683,27 @@ function _preflightVersionCheck(callback){
 // *** AUTO-LOAD: Load data BEFORE allowing interaction ***
 if(S.sb.url&&S.sb.key&&!MT.isMaster){
   _preflightVersionCheck(function(){
-  loadFromSupabase(function(ok){
+  loadFromSupabase(function onLoad(ok){
     MT.loading=false;
-    MT.dataLoaded=true; // Flag: data has been loaded, safe to save
+    if(S.sb.status==='error'){
+      // CRITICAL: the load FAILED (network / Supabase cold-start or pause / bad response).
+      // Keep saves BLOCKED (dataLoaded=false) so the empty in-memory state can NEVER
+      // overwrite the good data on the server. Retry a few times, then warn.
+      MT.dataLoaded=false;
+      MT._loadRetries=(MT._loadRetries||0)+1;
+      if(MT._loadRetries<=3){
+        console.warn('Supabase load failed — tentativa '+MT._loadRetries+'/3 em 3s');
+        S.sb.status='syncing';R();
+        setTimeout(function(){loadFromSupabase(onLoad)},3000);
+        return;
+      }
+      if(!MT._loadErrAlerted){
+        MT._loadErrAlerted=true;
+        alert('\u26A0\uFE0F N\u00E3o foi poss\u00EDvel carregar os dados do servidor ap\u00F3s v\u00E1rias tentativas.\n\nAs altera\u00E7\u00F5es est\u00E3o BLOQUEADAS para proteger seus dados (nada ser\u00E1 salvo por cima). Verifique a conex\u00E3o e recarregue a p\u00E1gina (Cmd+R).');
+      }
+      R();return;
+    }
+    MT.dataLoaded=true; // load OK (com dados, ou escola nova genuinamente vazia) — safe to save
     if(ok){
       console.log('=== STATE LOADED ===');
       console.log('Loaded: '+S.cls.length+' turmas, '+S.spt.length+' sports, '+S.enr.length+' enrollments, '+Object.keys(S.brk).length+' brackets');
