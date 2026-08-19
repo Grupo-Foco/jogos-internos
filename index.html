@@ -2502,12 +2502,25 @@ function _isRodizioRound(rd){
   return n>0&&rd.m.length>=n;
 }
 
+function _bracketComplete(rs){
+  // Uma chave só conta (ranking + pontos) quando ESTÁ COMPLETA.
+  // Rodízio: todos os jogos do 1º round com placar. Mata-mata: final decidida.
+  if(!rs||!rs.length)return false;
+  function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
+  var r0=rs[0]||{m:[]};
+  if(_isRodizioRound(r0)){
+    return r0.m.every(function(m){var p1=!isReal(m.t1),p2=!isReal(m.t2);return (p1&&p2)||(m.s1!=null&&m.s2!=null);});
+  }
+  var lastFR=rs[rs.length-1];var fm=lastFR.m.find(function(m){return!m.is3rd});
+  return !!(fm&&fm.w&&isReal(fm.w));
+}
 function computeBracketRanking(rs){
   // Returns ordered array of team ids (best first) for one bracket's rounds.
   // Knockout: 1-4 from final + 3rd-place match; 5th+ by round eliminated
   // (deeper = higher) then by how far the team's conqueror advanced.
   // Rodízio (all-play-all first round): by points (3/1/0) then goal diff (SG).
   if(!rs||!rs.length)return [];
+  if(!_bracketComplete(rs))return [];
   function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
   if(_isRodizioRound(rs[0])){
     return _rodizioStandings(rs[0]).map(function(s){return s.t});
@@ -2559,17 +2572,7 @@ function _awardBracketPositions(rs,cb){
   // computeBracketRanking (resolves W_/L_ slot refs) and awards only when complete.
   if(!rs||!rs.length)return;
   function isReal(t){return t&&t!=='BYE'&&t.indexOf('PH_')!==0&&t.indexOf('W_')!==0&&t.indexOf('L_')!==0&&t.indexOf('GW_')!==0}
-  var r0=rs[0]||{m:[]},cnt={};
-  r0.m.forEach(function(m){[m.t1,m.t2].forEach(function(t){if(isReal(t))cnt[t]=(cnt[t]||0)+1})});
-  var isRod=Object.keys(cnt).some(function(t){return cnt[t]>=2})&&r0.m.length>=3;
-  var complete;
-  if(isRod){
-    complete=r0.m.every(function(m){var p1=!isReal(m.t1),p2=!isReal(m.t2);return (p1&&p2)||(m.s1!=null&&m.s2!=null);});
-  } else {
-    var lastFR=rs[rs.length-1];var fm=lastFR.m.find(function(m){return!m.is3rd});
-    complete=!!(fm&&fm.w&&isReal(fm.w));
-  }
-  if(!complete)return;
+  if(!_bracketComplete(rs))return;
   computeBracketRanking(rs).forEach(function(tid,i){
     if(!isReal(tid))return;
     cb(tid,i+1);
@@ -2811,7 +2814,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.08·r28'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.08·r29'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
