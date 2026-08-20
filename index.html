@@ -2583,7 +2583,9 @@ function calcRk(){
   var pts={};
   // Points from bracket wins
   Object.entries(S.brk).forEach(function(e1){
-    Object.values(e1[1]).forEach(function(rs){rs.forEach(function(r){r.m.forEach(function(m){
+    Object.values(e1[1]).forEach(function(rs){
+    var woSeen={},isKnock=!_isRodizioRound(rs[0]||{m:[]});
+    rs.forEach(function(r){r.m.forEach(function(m){
       // Skip matches with placeholder teams
       var t1ok=m.t1&&m.t1.indexOf('PH_')!==0&&m.t1.indexOf('W_')!==0&&m.t1.indexOf('L_')!==0;
       var t2ok=m.t2&&m.t2.indexOf('PH_')!==0&&m.t2.indexOf('W_')!==0&&m.t2.indexOf('L_')!==0;
@@ -2607,8 +2609,9 @@ function calcRk(){
           }
         }
       }
-      // WO penalty
-      if(m.wo){
+      // WO penalty (mata-mata: no máx. 1 por turma na chave — perder=eliminado)
+      if(m.wo&&!(isKnock&&woSeen[m.wo])){
+        woSeen[m.wo]=true;
         var woPenalty=m.wo;
         if(!pts[woPenalty])pts[woPenalty]={w:0,d:0,l:0,p:0,wo:0,draws:0};
         pts[woPenalty].wo++;pts[woPenalty].p+=(sc.pWO!=null?sc.pWO:-2);
@@ -2814,7 +2817,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.08·r29'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.08·r30'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -4350,6 +4353,7 @@ function calcClassDetail(classId){
     var spName=sp?sp.nm:'?';
     Object.entries(cts).forEach(function(e2){
       var ct=e2[0],rs=e2[1];
+      var isKnock=!_isRodizioRound(rs[0]||{m:[]});
       // Count wins, draws, losses, WOs for this class in this sport+category
       var wins=0,draws=0,losses=0,wos=0;
       rs.forEach(function(r){r.m.forEach(function(m){
@@ -4405,6 +4409,7 @@ function calcClassDetail(classId){
           lines.push({desc:'❌ <b>'+spName+' '+ct+'</b> — '+losses+' derrota(s) × '+pLossV+' pts',pts:losses*pLossV});
         }
       }
+      if(isKnock&&wos>1)wos=1;
       if(wos>0){
         lines.push({desc:'🔴 <b>'+spName+' '+ct+'</b> — '+wos+' W.O.',pts:wos*(sc.pWO||0)});
         totalWO+=wos;
