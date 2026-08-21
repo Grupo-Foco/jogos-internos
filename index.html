@@ -2817,7 +2817,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.08·r30'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.08·r31'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
@@ -4442,10 +4442,17 @@ function calcClassDetail(classId){
     }
   });
 
-  // Recurso punishments
+  // Recurso punishments — se for W.O. de esporte individual, mostra esporte + observação
   (S.recursos||[]).forEach(function(rec){
     if(rec.punishClassId===classId&&rec.punishPts){
-      lines.push({desc:'📝 <b>Recurso</b> — Punição'+(rec.adminResp?' ('+rec.adminResp+')':''),pts:rec.punishPts});
+      var recSp=rec.sportId?((S.spt.find(function(s){return s.id===rec.sportId})||{}).nm||''):'';
+      var obs=(rec.description||'').trim();
+      var lbl,ico='🔴';
+      if(recSp&&obs)lbl=recSp+' — '+obs;
+      else if(obs)lbl=obs;
+      else if(recSp)lbl=recSp+' — W.O.';
+      else{lbl='Recurso — Punição'+(rec.adminResp?' ('+rec.adminResp+')':'');ico='📝';}
+      lines.push({desc:ico+' <b>'+lbl+'</b>',pts:rec.punishPts});
     }
   });
 
