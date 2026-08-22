@@ -2678,7 +2678,32 @@ function calcCR(){
   (S.recursos||[]).forEach(function(rec){
     if(rec.punishClassId&&rec.punishPts){pts[rec.punishClassId]=(pts[rec.punishClassId]||0)+rec.punishPts}
   });
-  return Object.entries(pts).map(function(entry){var id=entry[0],p=entry[1];var cl=S.cls.find(function(x){return x.id===id});return{id:id,nm:cl?cl.nm:'—',yr:cl?cl.yr:'',p:p}}).sort(function(a,b){return b.p-a.p})
+  // --- Desempate (critério da escola): 1) pontos  2) nº de 1º lugares  3) colocação no Arena Solidário ---
+  function _ciOf(tid){var e=(S.enr||[]).find(function(x){return x.id===tid});return e?e.ci:tid;}
+  var first1={},solidRank={};
+  Object.entries(S.brk).forEach(function(e1){
+    Object.values(e1[1]).forEach(function(rs){
+      _awardBracketPositions(rs,function(tid,rank){ if(rank===1){var ci=_ciOf(tid);first1[ci]=(first1[ci]||0)+1;} });
+    });
+  });
+  (S.podiums||[]).forEach(function(pod){ if(pod.p1){first1[pod.p1]=(first1[pod.p1]||0)+1;} });
+  // Arena Solidário: acha o esporte cujo nome contém "Solid" e usa a colocação da turma nele
+  var solidSp=(S.spt||[]).find(function(x){return /SOLID/i.test(x.nm||'');});
+  if(solidSp){
+    Object.entries(S.brk).forEach(function(e1){
+      var parts=e1[0].split('__');var si=parts[1]||parts[0];if(si!==solidSp.id)return;
+      Object.values(e1[1]).forEach(function(rs){
+        computeBracketRanking(rs).forEach(function(tid,idx){var ci=_ciOf(tid);if(solidRank[ci]==null)solidRank[ci]=idx+1;});
+      });
+    });
+    (S.podiums||[]).forEach(function(pod){ if(pod.sportId===solidSp.id){ for(var i=1;i<=9;i++){ if(pod['p'+i]&&solidRank[pod['p'+i]]==null)solidRank[pod['p'+i]]=i; } } });
+  }
+  return Object.entries(pts).map(function(entry){var id=entry[0],p=entry[1];var cl=S.cls.find(function(x){return x.id===id});return{id:id,nm:cl?cl.nm:'—',yr:cl?cl.yr:'',p:p,first1:first1[id]||0,solid:(solidRank[id]!=null?solidRank[id]:9999)}}).sort(function(a,b){
+    if(b.p!==a.p)return b.p-a.p;
+    if(b.first1!==a.first1)return b.first1-a.first1;
+    if(a.solid!==b.solid)return a.solid-b.solid;
+    return 0;
+  })
 }
 
 function h(tag,attrs){
@@ -2817,7 +2842,7 @@ function R(){
       ):null,
       h('span',{'class':'badge bc',style:{maxWidth:'130px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.ev.name),
       h('span',{'class':'badge bg'},S.role==='admin'?'ADMIN':S.role==='judge'?'JUIZ':'ALUNO'),
-      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.08·r31'),
+      h('span',{'class':'badge',style:{background:'rgba(100,116,139,.15)',color:'var(--tx3)',fontSize:'9px',letterSpacing:'.02em'},title:'Versão publicada'},'v08.08·r32'),
       h('button',{'class':'btn btn-s btn-r',onclick:function(){S.auth=null;S.role='admin';S.page='dashboard';S.loginErr='';R()}},'Sair')
     )
   );
